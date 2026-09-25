@@ -1,10 +1,16 @@
 <p align="center"><img src="images/agri-stack-logo.jpg" alt="Agri Stack — DPI for Agriculture" width="160"></p>
 
-# Agri Stack data sharing
+# Agri Stack
 
-How a service provider (SP) gets farmer data that sits in several departmental registries: who routes the request, who decides what may be shared, and who enforces it.
+Agri Stack is the digital public infrastructure (DPI) for agriculture. These pages describe its architecture for OAN Ethiopia layers 1–3:
 
-These pages record where the design discussion has landed for OAN Ethiopia layers 1–3. Apart from the existing OpenG2P registries, Partner Management (PM) and Consent Manager (CM), none of this is built yet.
+- **Layer 1:** the functional registries (farmer, crop sown, livestock, DA)
+- **Layer 2:** reference and master data
+- **Layer 3:** the shared DPI services that connect and govern them
+
+The pages also cover how service providers get farmer data held across the registries: who routes a request, who decides what may be shared, and who enforces it.
+
+They record where the design discussion has landed. Apart from the existing OpenG2P registries, Partner Management (PM) and Consent Manager (CM), none of this is built yet.
 
 | Page | Covers |
 |---|---|

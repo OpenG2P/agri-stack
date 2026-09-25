@@ -32,9 +32,3 @@ All Layer 2 reference data lives in the **Master Data Service (MDS)**. There is 
   - a public read API
   - a change feed that registries subscribe to, instead of copying code lists once at install
 - Codes are defined by the country; international classifications are optional mappings. Publish code lists in SKOS-shaped JSON-LD, and boundaries through OGC API – Features.
-
-## Pilot order
-
-1. **Attendance:** proves a standalone activity register.
-2. **Crop sown:** proves stages and seasons.
-3. **Integrated Beneficiary Registry:** proves ingestion from several sources, plus projections.

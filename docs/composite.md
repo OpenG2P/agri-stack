@@ -158,6 +158,6 @@ Publishing is done by the Agri Stack platform team. Because the configuration ca
 
 ## Where configurations live
 
-- **Storage:** configuration files, query templates and schemas are kept in a Git repository, reviewed like code, and loaded by the composite service. An admin UI can be added later.
+- **Storage:** configuration files, query templates and schemas are kept in a Git repository, reviewed like code, and loaded by the composite service. An admin UI is optional.
 - **Sandbox:** each published use case appears in the developer sandbox with its schema, sample request and response, and a test harness.
 - **Adding a use case** (e.g. `input-subsidy-eligibility`) means a new configuration file plus the matching PM policy. No code changes are needed unless the use case requires a new kind of derived field.

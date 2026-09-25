@@ -95,13 +95,3 @@ An activity register does **not** use:
 | 12 | **Time partitioning, retention and archiving** | Attendance and seasonal data grow quickly |
 | 13 | **Configured indicators** over projections | Sown area per woreda, yield per hectare, attendance rate |
 | 14 | **Bulk export API** | Analytics, audits, FAO reporting |
-
-## Suggested phasing
-
-1. **Attendance pilot:**
-   - core items 1–5 and 8
-   - features 1 (per-subject projections only), 2, 3, 7 and 8
-2. **Crop sown on activities:**
-   - features 4, 5, 6, 9, 10 and 11
-   - retire the `core_pkg` fork and the patch to the ingestion worker
-3. **Scale and analytics:** features 12–14, plus aggregate projections and indicators.

@@ -80,14 +80,11 @@ text{font-family:'Public Sans','Helvetica Neue',Arial,sans-serif;fill:#1B231F}
       <!-- Layer 2 -->
       <line class="ar d" x1="190" y1="474" x2="190" y2="538" marker-end="url(#a1)"/>
       <line class="ar d" x1="549" y1="474" x2="549" y2="538" marker-end="url(#a1)"/>
-      <text class="lbl" x="370" y="511" text-anchor="middle">look up codes, geography, reference entities</text>
+      <text class="lbl" x="370" y="511" text-anchor="middle">look up codes, reference entities, geography</text>
 
-      <rect class="l2" x="20" y="540" width="340" height="60" rx="6"/>
-      <text class="t" x="190" y="564" text-anchor="middle">Master Data Service</text>
-      <text class="s" x="190" y="582" text-anchor="middle">code lists · admin areas · boundaries · public read</text>
-      <rect class="l2" x="379" y="540" width="340" height="60" rx="6"/>
-      <text class="t" x="549" y="564" text-anchor="middle">Agri Reference Registry</text>
-      <text class="s" x="549" y="582" text-anchor="middle">seed varieties · input products · breeds · public read</text>
+      <rect class="l2" x="20" y="540" width="699" height="60" rx="6"/>
+      <text class="t" x="369" y="564" text-anchor="middle">Master Data Service</text>
+      <text class="s" x="369" y="582" text-anchor="middle">code lists · reference entities (seed varieties, inputs, breeds) · admin areas · boundaries · public read</text>
 
       <!-- Right column: shared DPI -->
       <text class="cap" x="790" y="140">SHARED DPI · LAYER 3</text>

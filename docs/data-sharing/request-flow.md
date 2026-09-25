@@ -23,22 +23,4 @@ In this example the livestock registry is down. The bank still gets the farmer a
 
 ## Use-case (composite) configuration
 
-A use case describes **how** a request is served. It never grants access; access comes only from the PM policy.
-
-```yaml
-use_case: credit-profile/v1
-policy: credit-assessment           # gateway checks the caller is associated with this policy
-sources:
-  - controller: farmer-registry     request_scopes: [farmer:profile, farmer:land]
-  - controller: crop-sown-registry  request_scopes: [crop:season]   query: last 2 seasons
-  - controller: livestock-registry  request_scopes: [livestock:herd]
-response_schema: credit-profile/v1  # published contract for SPs
-mode: merged | data-blind
-derived: [total_land_ha]            # optional computed fields
-timeout_ms: 3000
-```
-
-- When the use case is published, its requested scopes must be a subset of the scopes allowed by the policy it refers to.
-- **Merged mode:** the composite reads the data and assembles one response, which makes it a data processor.
-- **Data-blind mode:** each registry encrypts its part to the bank's PM encryption key. The composite only bundles the encrypted parts with their statuses.
-- A CM change is needed so that a registered composite can present a consent whose audience is the bank.
+The `credit-profile` use case is defined by a configuration file loaded by the generic composite service. The file covers sources, query templates, response mapping, timeouts and the checks run before publishing. See [Use-case composite](composite.md).

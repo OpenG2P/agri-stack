@@ -2,11 +2,11 @@
 
 # How each registry is built
 
-Registries run on the OpenG2P registry platform. The platform today supports only a register and its child tables; the plan extends it to **two kinds, register and activity register, plus child tables**. A registry instance can hold only registers, only an activity register, or both. Something that earlier looked like a third "reference" kind is simply a register with the public-read switch turned on.
+Registries run on the OpenG2P registry platform. The platform today supports only a register and its child tables; the plan extends it to **two kinds, register and activity register, plus child tables**. A registry instance can hold only registers, only an activity register, or both.
 
 | Kind | Behaviour | Platform features | Examples |
 |---|---|---|---|
-| **Register** | Changeable, governed entities, person or not | Change requests + AWE, history, functional ID, dedup (can be switched off), DCI, optional public read | Farmer, household, DA, seed variety, training session |
+| **Register** | Changeable, governed entities, person or not | Change requests + AWE, history, functional ID, dedup (can be switched off), DCI | Farmer, household, DA, training session, cluster |
 | **Table** | Child rows owned by a register record | Inherits from its parent | Land parcels, household members |
 | **Activity register** | Append-only records of activities. A correction supersedes the earlier record; nothing is edited in place. Can stand alone or relate to a register. | Idempotency key, occurred/recorded time, external references, batch entry, time partitioning. No ID issuance, change requests or history tables. See [Activity register](activity-register.md). | Sown, harvested, attended, paid |
 
@@ -19,8 +19,18 @@ A projection is current state computed from activities: for example, the current
 
 ## Layer 2 split
 
-- **Master Data Service** keeps simple code lists and geography (admin areas, and boundaries stored in MinIO). It gains approvals through AWE, audit, history, a public read API and a change feed.
-- **Agri Reference Registry** holds entities rich enough to need their own form, such as seed varieties, input products and breeds. It is a registry instance with public read turned on.
+All Layer 2 reference data lives in the **Master Data Service (MDS)**. There is no separate reference registry.
+
+- **What MDS holds:**
+  - simple code lists (gender, tenure type, units, crop types)
+  - richer reference entities such as seed varieties, input products and breeds
+  - geography: admin areas, with boundaries stored in MinIO
+- **What MDS needs to gain:**
+  - **typed attributes per list**, so an entity like a seed variety can carry crop, maturity days, release year and agro-ecological zone (for example a JSONB attribute set validated by a JSON Schema defined per list)
+  - approvals through AWE
+  - audit and history
+  - a public read API
+  - a change feed that registries subscribe to, instead of copying code lists once at install
 - Codes are defined by the country; international classifications are optional mappings. Publish code lists in SKOS-shaped JSON-LD, and boundaries through OGC API – Features.
 
 ## Pilot order

@@ -41,7 +41,7 @@ An activity register does **not** use:
 |---|---|
 | `CropSown` header register (functional ID, dedup at 70) | **Activity context** "plot × season": a grouping key (farmer ref + plot ref + crop year + season) with an open/closed status. Crop sown doesn't need to be a register. |
 | Planning, Cultivation, Sowing, Production, Harvest, Infestation tables | **Activity types**: `PLANNED`, `LAND_PREPARED`, `SOWN`, `GROWTH_OBSERVED`, `HARVESTED`, `INFESTATION_REPORTED`. Each has a JSON-Schema payload and a few promoted columns. |
-| Cluster / CultivationCluster tables | A **cluster register** (reference entity, with the switch for public read available), referenced by activities |
+| Cluster / CultivationCluster tables | A **cluster register** in the same instance, referenced by activities |
 | `lifecycle_stage` on the header | A **projection**: current stage, area sown, yield and last activity per plot × season |
 | `farmer_name`, `region_name`… copied onto records | **Typed references** to the Farmer Registry / Fayda and to MDS geography, with names shown through a cached lookup |
 | `da_name`, `da_mobile_number` on each line | A reference to the **DA Registry** |

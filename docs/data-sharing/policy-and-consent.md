@@ -14,7 +14,7 @@ Each registry computes this intersection for its own part, so a misconfigured us
 |---|---|---|---|
 | **Data-share policy** (PM) | Departments (data controllers), approved through AWE | Allowed scopes per registry, purposes, fetch type, validity ceiling, data life. A policy is reusable: many partners can be associated with one policy. | Rarely. A change that widens access goes back to the department concerned. |
 | **Partner association** (PM) | PM administrators | Which partners may use a policy | Onboarding a new bank is one association, with no re-approval |
-| **Use-case configuration** (gateway/composite) | Agri Stack platform team | Sources, query templates, requested scopes (must be ⊆ policy), response schema, merged or data-blind, timeout | Versioned like an API |
+| **Use-case configuration** ([composite](composite.md)) | Agri Stack platform team | Sources, query templates, requested scopes (must be ⊆ policy), response schema, merged or data-blind, timeout | Versioned like an API |
 | **Consent** (CM) | The farmer | Scopes agreed for this purpose | Per farmer; revocable |
 
 ## Example PM policy
@@ -48,5 +48,5 @@ credit-assessment v3  ←  Bank A, Bank B, MFI C
 
 - **PM:** add policy, policy-section and association entities, with AWE approval per section.
 - **CM:** `/validate` reads policies from PM instead of CM's own `PartnerPolicy` tables.
-- **Composite service:** check each use case against its PM policy when the use case is published.
+- **Composite service:** check each use case against its PM policy when the use case is published (see [publish checks](composite.md#checks-when-a-use-case-is-published)).
 - **Consent:** see the [consent model](consent-model.md).

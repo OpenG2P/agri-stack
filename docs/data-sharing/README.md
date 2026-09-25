@@ -10,6 +10,7 @@ These pages record where the design discussion has landed for OAN Ethiopia layer
 |---|---|
 | [This page](#components-and-who-talks-to-whom) | Components and who talks to whom |
 | [Request flow](request-flow.md) | One request, end to end |
+| [Use-case composite](composite.md) | How a composite use case is configured, validated and run |
 | [Policy and consent](policy-and-consent.md) | What gets released; policy vs use case vs consent |
 | [Consent model](consent-model.md) | One consent for the partner, one grant per registry inside CM (proposed) |
 | [Registry model](registry-model.md) | Register, table and activity-register kinds; projections; Layer 2 split |
@@ -23,7 +24,7 @@ These pages record where the design discussion has landed for OAN Ethiopia layer
 | Colour | Layer |
 |---|---|
 | Blue | Layer 1: functional registries (system of record) |
-| Ochre | Layer 2: reference / master data |
+| Ochre | Layer 2: reference / master data (all in MDS) |
 | Teal | Layer 3: shared DPI |
 | Green | Layer 4: use-case service |
 
@@ -36,7 +37,7 @@ Every registry sends `/validate` to the Consent Manager; the single arrow in the
 - **Partner Management (one instance).** The trust root for every participant: service providers, registries and composites. It also holds the **data-share policies** (moved here from CM), split into one section per department, and records which partners are associated with each policy.
 - **Consent Manager (one instance).** Holds the farmer's individual consent. `/validate` returns what the farmer consented to, intersected with the calling registry's policy section.
 - **Registries (one per department).** Each one is sovereign: it checks the caller, calls `/validate`, and releases only the effective scopes. All of them are keyed to the same Fayda-based identifier.
-- **API gateway and composites.** The gateway is the single public entry point. Data from several registries is merged only in narrow composite services built for one purpose each, such as `credit-profile`. There is no general query engine across registries.
+- **API gateway and composites.** The gateway is the single public entry point. Data from several registries is merged only in narrow composite services built for one purpose each, such as `credit-profile`. There is no general query engine across registries. Each use case is a configuration file loaded by one generic composite service (see [Use-case composite](composite.md)).
 - **AWE.** Each department approves its own section of a policy.
 - **Audit Manager.** Receives audit events from every hop, linked by the request ID.
 

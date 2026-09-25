@@ -64,10 +64,10 @@ text{font-family:'Public Sans','Helvetica Neue',Arial,sans-serif;fill:#1B231F}
       <text class="s" x="102" y="413" text-anchor="middle">register + tables</text>
       <rect class="l1" x="206" y="372" width="149" height="60" rx="6"/>
       <text class="t" x="280" y="396" text-anchor="middle">Crop Sown Registry</text>
-      <text class="s" x="280" y="413" text-anchor="middle">events + projections</text>
+      <text class="s" x="280" y="413" text-anchor="middle">activity register</text>
       <rect class="l1" x="384" y="372" width="149" height="60" rx="6"/>
       <text class="t" x="458" y="396" text-anchor="middle">Livestock Registry</text>
-      <text class="s" x="458" y="413" text-anchor="middle">register + events</text>
+      <text class="s" x="458" y="413" text-anchor="middle">register + activities</text>
       <rect class="l1" x="562" y="372" width="149" height="60" rx="6"/>
       <text class="t" x="636" y="396" text-anchor="middle">DA Registry</text>
       <text class="s" x="636" y="413" text-anchor="middle">register</text>

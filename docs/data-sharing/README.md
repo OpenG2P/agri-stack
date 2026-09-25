@@ -12,7 +12,8 @@ These pages record where the design discussion has landed for OAN Ethiopia layer
 | [Request flow](request-flow.md) | One request, end to end |
 | [Policy and consent](policy-and-consent.md) | What gets released; policy vs use case vs consent |
 | [Consent model](consent-model.md) | One consent for the partner, one grant per registry inside CM (proposed) |
-| [Registry model](registry-model.md) | Register, table and event kinds; projections; Layer 2 split |
+| [Registry model](registry-model.md) | Register, table and activity-register kinds; projections; Layer 2 split |
+| [Activity register](activity-register.md) | Append-only activity registers (attendance, crop sown): changes and new features needed in the registry platform |
 | [Open items](open-items.md) | Decisions and checks still pending |
 
 ## Components and who talks to whom

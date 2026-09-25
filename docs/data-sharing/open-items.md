@@ -7,5 +7,6 @@
 - **Replay guard.** CM's replay check is per consent ID. Under the single-consent model it moves to a per-request nonce, with usage counted per consent and controller.
 - **Presentation via the composite.** CM must accept a consent whose audience is the partner when a registered composite presents it.
 - **Moving policies to PM.** Move `PartnerPolicy` from CM to PM, with a section per department and partner associations; `/validate` then reads from PM. CM's design docs still describe policies held in CM.
-- **Crop sown fork.** The Crop Sown Registry overwrites the platform core with a modified copy and patches the ingestion worker. The genuine gaps should be fixed upstream as part of the event kind.
+- **Crop sown fork.** The Crop Sown Registry overwrites the platform core with a modified copy and patches the ingestion worker. The genuine gaps should be fixed upstream as part of the [activity register](activity-register.md).
+- **Activity register scope.** Agree the features for the attendance pilot and which verification, sequence and calendar rules crop sown needs (see [activity register](activity-register.md#suggested-phasing)).
 - **MDS partner endpoints.** They currently have no authentication decorator.

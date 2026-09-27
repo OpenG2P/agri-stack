@@ -2,7 +2,7 @@
 
 # Activity register
 
-> **Status: proposed.** This page uses the Crop Sown Registry as the worked example. Nothing described here is built in the registry platform (RP) yet.
+> This page uses the Crop Sown Registry as the worked example. The design as built is under [Design in the registry platform](#design-in-the-registry-platform); the Crop Sown Registry itself is described in [Crop Sown Registry](crop-sown-registry.md).
 
 ## What it is
 
@@ -95,3 +95,65 @@ An activity register does **not** use:
 | 12 | **Time partitioning, retention and archiving** | Attendance and seasonal data grow quickly |
 | 13 | **Configured indicators** over projections | Sown area per woreda, yield per hectare, attendance rate |
 | 14 | **Bulk export API** | Analytics, audits, FAO reporting |
+
+## Design in the registry platform
+
+This is how the activity register is built in `registry-platform` (branch `feature/activity-register`).
+
+### Data model
+
+The activity model is **its own base class**, `G2PActivity`, next to `G2PRegister`. `G2PRegister` itself is unchanged, so existing registries behave exactly as before.
+
+| Table | Purpose |
+|---|---|
+| `g2p_register_definitions` (existing) | An activity register is a row with `register_purpose = ACTIVITY` |
+| `g2p_activity_<name>` (per register) | The activities. Standard fields plus a JSONB `payload`, and payload fields promoted to typed columns for filtering, indexes, data policies and indicators. **Partitioned by year** of `occurred_at`, plus a default partition. |
+| `g2p_activity_projection_<name>` (per register) | The current state, one row per context |
+| `g2p_activity_types` | Per type: JSON Schema, form layout, rules (repeatable, uniqueness, prior types with warn/block, due window, backdating limit, verification), reference rules, Ethiopian-calendar fields |
+| `g2p_activity_contexts` | Grouping key (e.g. plot × year × season × crop) with subject, attributes and open/closed status |
+| `g2p_activity_period_locks` | Closed periods, with who reopened them and why |
+| `g2p_activity_idempotency_keys` | One activity per key, across all partitions |
+| `g2p_activity_outbox` | Events written in the same transaction as the activity |
+| `g2p_activity_temporary_references` | Offline temporary IDs and what they resolved to |
+| `g2p_activity_indicators` | Indicator definitions: aggregate, column, group-by, filters. No SQL is stored in configuration. |
+| `g2p_activity_odk_forms`, `g2p_activity_odk_failures` | ODK Central form mappings and the submissions that failed |
+
+- **Append-only is enforced in the database.** A trigger rejects `DELETE`, and rejects any `UPDATE` that touches columns other than status and verification.
+- **Extensions need no migration code.** The platform migration finds an extension's `G2PActivity…` and `G2PActivityProjection…` models and creates them: partitions, indexes and trigger.
+
+### Writing an activity (one transaction)
+
+1. **Idempotency.** If the idempotency key has been seen before, return the existing activity.
+2. **Prepare the payload.**
+   - Convert Ethiopian-calendar dates.
+   - Let the domain service add derived values (e.g. yield per hectare).
+   - Validate against the type's JSON Schema.
+3. **Check references.**
+   - Code lists, including nested rows such as fertiliser types: strict.
+   - Master Data geography.
+   - Records in the same registry.
+   - External IDs: pattern only, or a lookup through the domain service; strict, lenient or none.
+   - Temporary IDs: recorded now and resolved later.
+4. **Find or open the context** and lock it, so concurrent writes to one context are serialised.
+5. **Check rules:** dates, closed periods, repeatability, uniqueness, sequence. Warnings are stored on the activity; blocking rules reject it.
+6. **Save.** Insert the activity and its idempotency key, recompute the context's projection in the same transaction, and write an outbox event.
+
+**Corrections:**
+- **Supersede:** a new activity replaces the old one; the old one is kept as `SUPERSEDED`.
+- **Void:** the activity no longer counts, but stays in the history.
+- **Verify or reject:** changes only the verification columns.
+- All of these need a reason and are blocked inside closed periods.
+
+### Interfaces
+
+| Where | What |
+|---|---|
+| Staff API `/activity/*` | Registers and types (types include code-list options for forms); append (single and batch, atomic or per item); supersede, void, verify, reject; get, search, timeline; contexts (open, close, reopen); work list; projections; indicators; period locks; temporary references; rebuild projections |
+| Partner API `/partner/activity/append_activities` | DCI-style signed envelope (PM keys); per-item outcomes |
+| Partner API `/dci/registry/sync/search` | `reg_type` can be an activity register. Returns current activities only, rendered by the register's DCI template, with the consent clamp applied as for records. |
+| Celery | `activity_outbox_worker` (outgest and aggregate hook), `activity_reconcile_worker` (repairs projection drift), `activity_partition_worker` (next year's partitions), `activity_odk_pull_worker` (ODK Central) |
+| Staff UI | Activity registers on the home page and at `/activity`. Per register: activities (filters, detail panel with verify/reject/correct/void), current state, work list, indicators, record (single or batch, form generated from the JSON Schema, Ethiopian-calendar date picker), settings. Per context: current state, timeline, record the next activity. |
+
+**Permissions:** `activity:view`, `activity:create`, `activity:correct`, `activity:verify`, `activity:configure`. They are mapped onto the existing IAM roles by the registry's IAM registration.
+
+**Data policies fail closed for activity registers.** A policy on a column the activity table doesn't have denies access, instead of being skipped as it is for record registers.

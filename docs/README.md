@@ -10,7 +10,7 @@ Agri Stack is the digital public infrastructure (DPI) for agriculture. These pag
 
 The pages also cover how service providers get farmer data held across the registries: who routes a request, who decides what may be shared, and who enforces it.
 
-They record where the design discussion has landed. Apart from the existing OpenG2P registries, Partner Management (PM) and Consent Manager (CM), none of this is built yet.
+They record where the design discussion has landed. Besides the existing OpenG2P registries, Partner Management (PM) and Consent Manager (CM), the [activity register](activity-register.md#design-in-the-registry-platform) and the [Crop Sown Registry](crop-sown-registry.md) are built; the rest is design.
 
 | Page | Covers |
 |---|---|
@@ -20,7 +20,8 @@ They record where the design discussion has landed. Apart from the existing Open
 | [Policy and consent](policy-and-consent.md) | What gets released; policy vs use case vs consent |
 | [Consent model](consent-model.md) | One consent for the partner, one grant per registry inside CM (proposed) |
 | [Registry model](registry-model.md) | Register, table and activity-register kinds; projections; Layer 2 split |
-| [Activity register](activity-register.md) | Append-only activity registers (attendance, crop sown): changes and new features needed in the registry platform |
+| [Activity register](activity-register.md) | Append-only activity registers (attendance, crop sown): what the registry platform needs and how it is built |
+| [Crop Sown Registry](crop-sown-registry.md) | The crop season activity register: activity types, fields, code lists, projection, indicators, channels |
 | [Open items](open-items.md) | Decisions and checks still pending |
 
 ## Components and who talks to whom

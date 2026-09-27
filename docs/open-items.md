@@ -20,6 +20,6 @@
   - `CROP_SEASON` lists Summer/Monsoon/Winter rather than Meher/Belg; the Crop Sown Registry uses its own `CS_SEASON` for now.
   - `CROP_COMMODITY` has only 12 crops and lacks sorghum, barley, faba bean, chickpea, coffee, enset and others.
 - **Registry platform build pins.** Fresh builds resolve SQLAlchemy 2.1, which no longer installs `greenlet`, and async database access then fails. Core now pins `sqlalchemy[asyncio] >=2.0,<2.1`.
-- **Concurrent migrations.** Every API migrates on start; concurrent `CREATE TABLE`s collided and left tables missing. Core migration now takes a Postgres advisory lock.
+- **Concurrent migrations.** Every API migrates on start; concurrent `CREATE TABLE`s collided and left tables missing. Core migration now takes a Postgres advisory lock. The extension's own migration (e.g. Farmer tables) still runs unlocked and can still collide; one API then logs the error while another completes the tables, as before. A lasting fix is to run migrations once, as a Helm hook Job, instead of in every API on start.
 - **MDS as the single reference-data service.** Design typed attributes per list (for seed varieties, input products, breeds), AWE approvals, history, a public read API and a change feed. See [registry model](registry-model.md#layer-2-split).
 - **MDS partner endpoints.** They currently have no authentication decorator.

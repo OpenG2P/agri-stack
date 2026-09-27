@@ -15,10 +15,11 @@
   - archiving old partitions
   - agent-portal entry
   - looking up Farmer Registry farmer and plot IDs (today only their format is checked)
-- **Master Data code lists need authentication.** The Master Data API now returns 401 to db-seed's anonymous code-list read, so `loadAttributes` silently skips on install. Registries then have no `CROP_COMMODITY` and similar lists. Needs a service account for db-seed, or an anonymous read of public code lists (which fits [Layer 2](registry-model.md#layer-2-split) being public).
+- **Registries read Master Data's database directly.** Registries no longer copy code lists at install; they query Master Data's code-list tables live over a database connection. That couples every registry to Master Data's schema. A public read API for code lists (see [Layer 2](registry-model.md#layer-2-split)) would replace the direct connection.
 - **Ethiopia country pack.**
-  - `CROP_SEASON` lists Summer/Monsoon/Winter rather than Meher/Belg; the Crop Sown Registry uses its own `CS_SEASON` for now.
-  - `CROP_COMMODITY` has only 12 crops and lacks sorghum, barley, faba bean, chickpea, coffee, enset and others.
+  - Master Data's pack loader upserts but never deletes. An existing Master Data therefore keeps retired codes, such as the old `CROP_SEASON` values `SEASON_SUMMER`, `SEASON_MONSOON` and `SEASON_WINTER`, after a reload. Retiring a code needs an `is_active` flag or a delete step.
+  - `CROP_COMMODITY` still lacks enset, pulses beyond faba bean, haricot bean and chickpea, and horticulture beyond a handful of crops. The list needs review with MoA.
+  - `SEED_VARIETY` is flat. Tying a variety to its crop needs typed attributes per list (below).
 - **Registry platform build pins.** Fresh builds resolve SQLAlchemy 2.1, which no longer installs `greenlet`, and async database access then fails. Core now pins `sqlalchemy[asyncio] >=2.0,<2.1`.
 - **Concurrent migrations.** Every API migrates on start; concurrent `CREATE TABLE`s collided and left tables missing. Core migration now takes a Postgres advisory lock. The extension's own migration (e.g. Farmer tables) still runs unlocked and can still collide; one API then logs the error while another completes the tables, as before. A lasting fix is to run migrations once, as a Helm hook Job, instead of in every API on start.
 - **MDS as the single reference-data service.** Design typed attributes per list (for seed varieties, input products, breeds), AWE approvals, history, a public read API and a change feed. See [registry model](registry-model.md#layer-2-split).

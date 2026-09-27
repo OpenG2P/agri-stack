@@ -29,6 +29,5 @@ All Layer 2 reference data lives in the **Master Data Service (MDS)**. There is 
   - **typed attributes per list**, so an entity like a seed variety can carry crop, maturity days, release year and agro-ecological zone (for example a JSONB attribute set validated by a JSON Schema defined per list)
   - approvals through AWE
   - audit and history
-  - a public read API
-  - a change feed that registries subscribe to, instead of copying code lists once at install
+  - a public read API and a change feed. Registries read code lists live today, but over a direct connection to MDS's database.
 - Codes are defined by the country; international classifications are optional mappings. Publish code lists in SKOS-shaped JSON-LD, and boundaries through OGC API – Features.

@@ -11,7 +11,7 @@ Repository: `OpenG2P/crop-sown-registry`. It is a thin extension of the registry
 **One context is one crop on one plot in one season:**
 
 ```
-<plot_id>|<crop_year>|<season>|<crop>        e.g.  LND-7781|2019|MEHER|TEFF
+<plot_id>|<crop_year>|<season>|<crop>        e.g.  LND-7781|2019|SEASON_MEHER|CROP_TEFF
 ```
 
 - **Intercropping** is two contexts on the same plot.
@@ -43,12 +43,27 @@ Repository: `OpenG2P/crop-sown-registry`. It is a thin extension of the registry
 
 ## Code lists
 
-| List | Owner |
-|---|---|
-| `CROP_COMMODITY`, `SOIL_FERTILITY`, `WATER_SOURCE` | Master Data, agriculture domain of the Ethiopia pack. Codes are value codes such as `TEFF`. |
-| `CS_SEASON` (Meher, Belg, Irrigation), `CS_SEED_TYPE`, `CS_SEED_SOURCE`, `CS_SOWING_METHOD`, `CS_FERTILIZER_TYPE`, `CS_MACHINERY`, `CS_LAND_PREPARATION`, `CS_IRRIGATION_SOURCE`, `CS_IRRIGATION_METHOD`, `CS_CROPPING_SYSTEM`, `CS_GROWTH_STAGE`, `CS_CROP_CONDITION`, `CS_INFESTATION_TYPE`, `CS_INFESTATION_AGENT`, `CS_SEVERITY`, `CS_CONTROL_ACTION`, `CS_DAMAGE_CAUSE`, `CS_AGRO_ECOLOGICAL_ZONE`, `CS_SEED_VARIETY` | The Crop Sown Registry (seeded) |
+**All code lists live in Master Data.** The Crop Sown Registry keeps none of its own. The registry platform checks every coded field against Master Data at the time of writing, the same way the Farmer Registry's dropdowns and validation read their lists.
 
-The activity types, code lists, indicators and ODK mapping are **defined in one file**, `scripts/activity_definitions.py`. The seed SQL is generated from it, and CI checks that the committed SQL matches.
+The lists are the **agriculture domain of the Ethiopia country pack** (`openg2p-data`, `packs/ETH/domains/agriculture`). Master Data loads that domain when installed with `geoSeed.domains: [agriculture]`.
+
+| Used for | Lists |
+|---|---|
+| The crop season | `CROP_COMMODITY`, `CROP_SEASON` (Meher, Belg, Irrigation), `SEED_VARIETY` |
+| Planning and land preparation | `CROPPING_SYSTEM`, `LAND_PREPARATION_METHOD`, `IRRIGATION_SOURCE`, `IRRIGATION_METHOD`, `SOIL_FERTILITY` |
+| Sowing | `SEED_TYPE`, `SEED_SOURCE`, `SOWING_METHOD`, `FERTILIZER_TYPE`, `FARM_MACHINERY` |
+| Clusters | `AGRO_ECOLOGICAL_ZONE`, `WATER_SOURCE` |
+| Observation, infestation and damage | `CROP_GROWTH_STAGE`, `CROP_CONDITION`, `INFESTATION_TYPE`, `INFESTATION_AGENT`, `INFESTATION_SEVERITY`, `PEST_CONTROL_ACTION`, `CROP_DAMAGE_CAUSE` |
+
+- **Codes carry their list's prefix,** such as `CROP_TEFF`, `SEASON_MEHER` and `SEV_HIGH`.
+- **Adding or changing a code** is a change to the country pack, not to the registry.
+- **Without the agriculture domain in Master Data,** every activity is rejected on its crop code.
+
+The activity types, indicators and ODK mapping are **defined in one file**, `scripts/activity_definitions.py`. The seed SQL is generated from it.
+
+CI checks two things:
+- the committed SQL matches the definitions;
+- every list and code the definitions use exists in the Ethiopia pack.
 
 ## Crop season status (projection)
 

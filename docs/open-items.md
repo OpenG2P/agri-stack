@@ -9,9 +9,9 @@
 - **Moving policies to PM.** Move `PartnerPolicy` from CM to PM, with a section per department and partner associations; `/validate` then reads from PM. CM's design docs still describe policies held in CM.
 - **Crop sown fork.** The Crop Sown Registry overwrites the platform core with a modified copy and patches the ingestion worker. The genuine gaps should be fixed upstream as part of the [activity register](activity-register.md).
 - **Activity register design.** Settle the verification, sequence, period-locking and calendar rules (see [activity register](activity-register.md#new-features-not-in-the-registry-platform-today)).
-- **Crop seasons in two registries.** Crop sown can be a registry of its own or a register inside the Farmer Registry. If a country runs both, decide which one is authoritative for crop seasons, or how the two are merged when data is shared, so that sown area isn't counted twice.
+- **Crop seasons in two registries.** Crop seasons can be kept by the Crop Sown Registry, or by a register in the Farmer Registry's own extension (not built). If a country runs both, decide which one is authoritative for crop seasons, or how the two are merged when data is shared, so that sown area isn't counted twice.
 - **Generic, code-free activity storage.** The Observations design keeps every type in one platform table, and adds types through an API with no code. That would let "Activity" appear under Add Register. Deferred: crop sown needs an extension either way. Revisit for simple registers such as attendance.
-- **Aligning with the Observations design.** Still to build: the profile tab, `schema_version`, `source` / `submission_id`, and the asynchronous enrichment and aggregate layer. See [activity register](activity-register.md#relation-to-the-observations-design).
+- **Aligning with the Observations design.** Built: the profile tab, `schema_version`, `submission_id`, and the asynchronous enrichment and aggregate layer. The Crop Sown Registry uses the aggregate layer for a farmer's season summary and has no enrichment yet; weather or satellite data would be the first. See [activity register](activity-register.md#relation-to-the-observations-design).
 - **Activity register gaps.** Not yet designed:
   - bulk export API
   - file import into activity registers

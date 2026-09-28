@@ -6,7 +6,7 @@ The Crop Sown Registry (CSR) records what each farmer plans, prepares, sows, obs
 
 Repository: `OpenG2P/crop-sown-registry`. It is a thin extension of the registry platform, packaged like the Farmer Registry.
 
-This page describes the **separate-department** deployment. The same crop-sown activity register can also live **inside the Farmer Registry**, against its Land records. Only the plot and farmer references change; see [Where an activity register lives](activity-register.md#where-an-activity-register-lives).
+The Crop Sown Registry is **independent**. It shares data with the Farmer Registry (farmer and plot IDs), not code. If the Farmer Registry itself is to keep crop seasons against its Land records, that is a register in the Farmer Registry's own extension; see [Where an activity register lives](activity-register.md#where-an-activity-register-lives).
 
 ## Crop season: the activity context
 
@@ -88,6 +88,19 @@ One row per crop season:
 - crops with infestations
 
 Each is grouped by crop year and season.
+
+## Farmer's season summary
+
+For each farmer, crop year and season, the Crop Sown Registry keeps a summary across all their plots and crops. It is an aggregate, `FARMER_SEASON_SUMMARY`, with period key `<crop year>|<season>`. It holds:
+- crop seasons and plots;
+- planned, sown and harvested area;
+- quantity harvested and yield;
+- infestations and damage reports;
+- a breakdown by crop.
+
+The period runs over the Ethiopian crop year, Meskerem 1 to the last day of Pagume.
+
+The summary is recomputed from the crop-season projections after every change, including corrections and voids, and each value is kept in its history.
 
 ## Channels
 

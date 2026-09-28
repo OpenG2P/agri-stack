@@ -16,7 +16,7 @@ A registry instance can hold:
 | **Activity register only** | Attendance register, a standalone Crop Sown Registry |
 | **Both** | Farmer Registry with a "farm visits" activity register attached to the farmer register |
 
-An activity can refer to a subject in the **same instance** (a farmer register next to it) or **held elsewhere** (a Fayda token, a Farmer Registry ID, a plot in another registry).
+An activity can refer to a subject in the **same instance** (a farmer register next to it) or **held elsewhere** (a Fayda token, a Farmer Registry ID, a plot in another registry). Crop sown is supported both ways; see [Where an activity register lives](#where-an-activity-register-lives).
 
 An activity register does **not** use:
 - functional ID issuance (optional per activity type, e.g. a receipt number)
@@ -157,3 +157,55 @@ The activity model is **its own base class**, `G2PActivity`, next to `G2PRegiste
 **Permissions:** `activity:view`, `activity:create`, `activity:correct`, `activity:verify`, `activity:configure`. They are mapped onto the existing IAM roles by the registry's IAM registration.
 
 **Data policies fail closed for activity registers.** A policy on a column the activity table doesn't have denies access, instead of being skipped as it is for record registers.
+
+**An activity register's identity is fixed.** Its mnemonic names the extension's activity classes, so the generic register configuration can't rename it or switch it to or from a record register. That configuration also counts activities and contexts when deciding whether the register holds data, which is what stops a register in use from being deleted.
+
+## Relation to the Observations design
+
+The registry platform's [Observations design](https://docs.openg2p.org/products/registry/registry/design/observations-design) models the same idea under another name. Both use append-only records, a JSON Schema per type, corrections as new records, lifecycle order, and roll-ups. **The platform term stays "activity" for now.**
+
+**Where the two agree**
+
+| Observations | Activity register |
+|---|---|
+| Observation type, scoped per register | Activity type, scoped per register |
+| `VOIDS`: a new record replaces the old one, which is archived | Supersede |
+| `FOLLOWS`: harvest links to its sowing | Prior types, with warn or block |
+| Payload validated against the type's JSON Schema | Same |
+
+**Where they differ, and what we chose**
+
+| Topic | Observations | Activity register | Decision |
+|---|---|---|---|
+| Where the data lives | Inside the subject's registry; recorded from the record's profile | A register of its own. The subject can be in the same registry or in another one | **Support both.** See [Where an activity register lives](#where-an-activity-register-lives). |
+| Storage | One generic platform table for every type in every register; types added through an API, with no code | One table per register from the extension, with typed columns, yearly partitions and an append-only trigger | **Keep per-register tables.** Both deployments of crop sown ship an extension, and crop sown needs typed columns, partitions and a domain service. A generic, code-free table is deferred ([open items](open-items.md)). |
+| Grouping a lifecycle | An explicit `FOLLOWS` link, chosen by the agent, one step at a time | A context derived from the payload (plot × year × season × crop) | **Keep contexts.** They handle an 8-step lifecycle and intercropping. An explicit link is an option for types that can't derive a key. |
+| Roll-ups | Asynchronous: optional enrichment, then adapter-computed aggregates per subject and period, with history | Synchronous: a projection per context, recomputed in the same transaction, plus declarative indicators | **Keep projections for current state; add aggregates and enrichment as an asynchronous layer on top.** |
+| Code lists | The registry's local `G2PAttribute` tables | Read live from Master Data | **Ours.** The local tables no longer exist in the platform. |
+| Offline sync | Batch endpoint with no idempotency | Idempotency key, temporary IDs | Ours |
+| Governance | Not covered | Verification, period locks, reference rules, DCI with consent, data policies, permissions | Ours |
+
+**Taken from the Observations design**
+- **A tab on the subject's profile.** A record in a record register (e.g. a Farmer Registry Land record) shows its activities and can record a new one, with the subject filled in.
+- **`schema_version`**, incremented on the activity type and stamped on each activity.
+- **Provenance on the envelope:** `source` (`AGENT_APP`, `STAFF_WEB_UI`, `PARTNER_<mnemonic>` checked against Partner Management) and `submission_id` for a batch.
+- **An asynchronous layer on top of projections:**
+  - **enrichment**, such as weather or satellite data, stored beside the payload and never replacing it;
+  - **aggregates** per subject and period (`period_key` with start and end dates, plus geography dimensions), with history. These are for roll-ups across contexts, e.g. a farmer's season summary across plots.
+- **Form behaviour:**
+  - defaults from the subject's last activity of the same type;
+  - offline drafts with a sync badge;
+  - choice chips for code lists.
+
+## Where an activity register lives
+
+A crop season can be recorded in either of two places. The platform supports both.
+
+| Deployment | Example | Plot and farmer | Where staff record |
+|---|---|---|---|
+| **Its own registry** | The Crop Sown Registry, run by a separate department | References to the Farmer Registry, **checked for format only** (`EXTERNAL`, lenient); temporary plot IDs resolved later | The registry's activity pages |
+| **Inside a record registry** | A `CropSown` activity register inside the Farmer Registry | The Farmer Registry's own Land and farmer records (`LOCAL_RECORD`, strict); the subject is the Land record | The activity pages, **and** an Activities tab on the Land or farmer record |
+
+- **One implementation.** The crop-sown models, domain service and activity definitions are one package. The Crop Sown Registry wraps it as a registry of its own; the Farmer Registry installs it as one more register.
+- **Only the reference rules and the seed differ.** Context key, activity types, projection, indicators and DCI rendering are the same, so data can move between the two deployments.
+- **If a country runs both,** one of them has to be authoritative for crop seasons, or the two are merged when data is shared. See [open items](open-items.md).

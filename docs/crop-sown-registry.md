@@ -6,6 +6,8 @@ The Crop Sown Registry (CSR) records what each farmer plans, prepares, sows, obs
 
 Repository: `OpenG2P/crop-sown-registry`. It is a thin extension of the registry platform, packaged like the Farmer Registry.
 
+This page describes the **separate-department** deployment. The same crop-sown activity register can also live **inside the Farmer Registry**, against its Land records. Only the plot and farmer references change; see [Where an activity register lives](activity-register.md#where-an-activity-register-lives).
+
 ## Crop season: the activity context
 
 **One context is one crop on one plot in one season:**

@@ -2,7 +2,7 @@
 
 # How each registry is built
 
-Registries run on the OpenG2P registry platform. The platform today supports only a register and its child tables; the plan extends it to **two kinds, register and activity register, plus child tables**. A registry instance can hold only registers, only an activity register, or both.
+Registries run on the OpenG2P registry platform, which supports **two kinds, register and activity register, plus child tables**. A registry instance can hold only registers, only an activity register, or both. [Register vs activity register](register-vs-activity-register.md) compares them in detail.
 
 | Kind | Behaviour | Platform features | Examples |
 |---|---|---|---|

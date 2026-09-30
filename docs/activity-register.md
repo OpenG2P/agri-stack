@@ -2,7 +2,7 @@
 
 # Activity register
 
-> This page uses the Crop Sown Registry as the worked example. The design as built is under [Design in the registry platform](#design-in-the-registry-platform); the Crop Sown Registry itself is described in [Crop Sown Registry](crop-sown-registry.md).
+> For a side-by-side comparison with conventional registers, see [Register vs activity register](register-vs-activity-register.md). This page uses the Crop Sown Registry as the worked example. The design as built is under [Design in the registry platform](#design-in-the-registry-platform); the Crop Sown Registry itself is described in [Crop Sown Registry](crop-sown-registry.md).
 
 ## What it is
 

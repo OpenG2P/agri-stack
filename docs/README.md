@@ -20,6 +20,7 @@ They record where the design discussion has landed. Besides the existing OpenG2P
 | [Policy and consent](policy-and-consent.md) | What gets released; policy vs use case vs consent |
 | [Consent model](consent-model.md) | One consent for the partner, one grant per registry inside CM (proposed) |
 | [Registry model](registry-model.md) | Register, table and activity-register kinds; projections; Layer 2 split |
+| [Register vs activity register](register-vs-activity-register.md) | How the two kinds differ: nature of data, definition, configuration, writing, reading, figures, governance |
 | [Activity register](activity-register.md) | Append-only activity registers (attendance, crop sown): what the registry platform needs, how it is built, where it lives, and how it relates to the Observations design |
 | [Crop Sown Registry](crop-sown-registry.md) | The crop season activity register: activity types, fields, code lists, projection, indicators, channels |
 | [Open items](open-items.md) | Decisions and checks still pending |

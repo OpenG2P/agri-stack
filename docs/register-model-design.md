@@ -59,7 +59,7 @@ These should work the same for entities and occurrences, and some of them are bu
 | **Reference rules** (code list, geography, local record, external ID; strict / lenient) | Widget-bound code lists only | Built | Available to entity registers too |
 | **Location as named levels** (`geo_dimensions`) | `geo_code_hierarchy_json` on the record | Built | Named levels on entity records too, for area statistics |
 | **Idempotent ingestion, submission IDs, schema versions** | No | Built | Both kinds |
-| **Participants with roles** | Parent links only | One subject + payload references | **Participants** (section 4) |
+| **Participants with roles** | Parent links only | One subject + payload references | **Typed participants** (section 4) |
 | **Sharing** (DCI, consent, data policies) | Built | Built | Both kinds, plus trust status (section 6) |
 
 ## 2. Trust layer
@@ -81,14 +81,14 @@ These apply to **both kinds**:
 
 ### The model (proposed)
 
-**Trust policy**, set in configuration per register, per activity type, and optionally per field or section:
+**Trust policy**, set in configuration per register, per activity type, and **per section** for entity registers (decided; sections match today's forms and verification table):
 - which steps are **required**, and **for what**:
   - `record`: the record needs it to be accepted;
   - `use:<purpose>`: needed only before a use such as `use:payment` or `use:certificate`;
 - **who may perform** each step: roles, and **trusted sources**, i.e. channels or partners whose authenticated submissions verify automatically;
 - **what evidence** is expected (a photo, a document, a device capture, a signature).
 
-Approval is **off unless a policy turns it on**, at the point where the programme will act on the data.
+Approval is **off unless a policy turns it on**, at the point where the programme will act on the data. Certificates are issued only from occurrences that happened, never from plans: a plan is an intention (decided).
 
 **Trust records** are attached to a target: an entity record, a section of it, a field, a change request, or an occurrence. Each one holds:
 - **step** (verification, approval, attestation) and **outcome** (confirmed / rejected / revoked);
@@ -98,7 +98,16 @@ Approval is **off unless a policy turns it on**, at the point where the programm
 
 There can be several per target: a verification, then a dispute, then a supervisor's confirmation.
 
-**Trust status** is a record's current trust, *derived* from its trust records (e.g. verified, not approved). It's what the UI shows, and what APIs filter and share.
+**Trust status** is a record's current trust, *derived* from its trust records (e.g. verified, not approved). It's what the UI shows, and what APIs filter and share. The vocabulary follows existing standards where there is one:
+
+| Step | Statuses | Source |
+|---|---|---|
+| **Verification** | `NOT_REQUIRED`, `PENDING`, `VERIFIED`, `REJECTED`; `DISPUTED` while a dispute is open | Today's activity verification statuses, plus a dispute state |
+| **Approval** | `NOT_REQUIRED`, `PENDING`, `APPROVED`, `REJECTED`, `CANCELLED` | The platform's existing approval statuses (change requests, AWE) |
+| **Attestation** (certificate) | `ACTIVE`, `SUSPENDED`, `REVOKED` | W3C Verifiable Credentials status lists (revocation, suspension) |
+| **Occurrence lifecycle** | `ACTIVE`, `SUPERSEDED`, `VOIDED` | As built. HL7 FHIR equivalents: `amended` / `corrected` (superseded), `entered-in-error` (voided) |
+
+**One summary label** is shown to users: the highest step reached, i.e. **Recorded → Verified → Approved → Attested**, with a flag for *rejected*, *disputed* or *revoked*.
 
 **Certificates:** an attestation creates a certificate ID and issues a verifiable credential. The credential names the subject, the facts attested and the record it points to. It is:
 - **revoked** when that record is superseded or voided (occurrence), or changed (entity);
@@ -129,22 +138,28 @@ A **correction** is a request to fix data, always with a **reason**. It is appli
 
 The form asks which. A supersede of an occurrence carries the same information as a change request on an entity; the choice between the two depends on the record kind, and the difference is in what later readings mean.
 
-## 4. Participants and occurrence-driven entity changes
+## 4. Participants, and entities first
 
 **Participants (proposed).** An occurrence has named roles, not just one subject:
 - a vaccination has a farmer, an animal and a vet;
 - a sowing has a farmer and a plot;
 - attendance has a person, an event and a worksite.
 
-Each participant is a typed reference with a role: entity register and record (local), or system and ID (external). One role is the **primary subject**, used for contexts and summaries. Participants are indexed, so "all vaccinations by vet V789" or "all activities on plot L1" is a direct query. Today's `subject_*` fields become the primary participant, and today's payload references (`plot_id`, `da_id`) become roles.
+Each participant has a **role** and is **always typed** (decided): `role: vet, register: Veterinarian, id: V789` for a register in the same registry, or `role: vet, system: vet-registry, id: V789` for one elsewhere. The type says where the ID lives, so it can be checked and looked up, and two registries with the same ID are never confused. Submitters send only the role and the ID; the activity type's configuration supplies the type, as reference rules do today.
 
-**Occurrence-driven entity changes (proposed).** Some occurrences should change an entity:
-- a **birth** creates an animal;
-- a **sale** changes its owner;
-- a **harvest** updates nothing;
-- a **cluster enrolment** links a plot to a cluster.
+One role is the **primary subject**, used for contexts and summaries. Participants are indexed, so "all vaccinations by vet V789" or "all activities on plot L1" is a direct query. Today's `subject_*` fields become the primary participant, and today's payload references (`plot_id`, `da_id`) become roles.
 
-The activity type declares an **entity effect**. When the occurrence is written (and trusted, if the policy says so), the platform raises a **change request** on the entity register, through that register's own approval. If that register is in another registry, the request goes through its partner API. The occurrence stays the history; the change request makes the entity current.
+**Entities first (decided).** An entity register is updated **before** any occurrence about that entity is recorded. Occurrences never create or change entities:
+- **Birth:** the animal is registered in the Animal register first. The *Born* occurrence then records the birth against that animal.
+- **Sale:** the owner change goes through the Animal register's own change request first. The *Sold* occurrence records the sale.
+- **Cluster enrolment:** the cluster and its membership are maintained in the Cluster register. Activities only refer to the cluster.
+
+**The two kinds stay independent this way.** Each kind has its own write path and its own approvals, and an occurrence is only ever about entities that already exist.
+
+**Consequences:**
+- **Referenced entities must exist.** For a register in the same registry, a strict local-record rule enforces it. For another registry, a lookup enforces it where one is available. Where it isn't (the Crop Sown Registry checks Farmer Registry IDs for format only), the rule is an operating procedure: register the farmer and plot in the Farmer Registry first.
+- **Temporary IDs conflict with it.** Temporary IDs (`TMP-…` plots created offline and resolved later) let an occurrence arrive before its entity. Under this rule, offline capture must register the new plot first, in the same sync, before the occurrence. Temporary IDs should be withdrawn, or kept only for a capture tool that submits the entity first.
+- **The history and the current state can be traced in both directions.** The occurrence (e.g. the sale) is the history of what happened; the entity's current state (the owner) comes from its own change request. Each can point to the other, through the change request's reference and the occurrence's participants.
 
 ## 5. How the three registries fit
 
@@ -164,7 +179,7 @@ Nothing changes for the Farmer Registry unless it adopts field verification or c
 | Register | Kind | Trust policy | Notes |
 |---|---|---|---|
 | CropSown | Occurrence. Types: Planned, Land prepared, Sown, Growth observed, Infestation reported, Damage reported, Harvested. Context: plot × crop year × season × crop | **Verification:** Sown and Harvested, by a supervisor from photo evidence (as today); Infestation optionally. **Approval** (new): Sown `use:subsidy`, Harvested `use:official-figure`; off otherwise. **Attestation** (new): crop certificate from a verified (and, where required, approved) sowing | Participants: farmer (primary), plot, development agent. The farmer and plot are external references to the Farmer Registry, checked for format. Location = the plot's woreda |
-| **Cluster** (proposed) | **Entity** | Approval of changes | Replaces the cluster attributes now carried on the `CLUSTER_ENROLLED` activity. That activity keeps only "plot joined cluster", with an **entity effect** that links them. Cluster totals are derived from the plot activities |
+| **Cluster** (proposed) | **Entity** | Approval of changes | Holds the cluster's attributes and membership, which the `CLUSTER_ENROLLED` activity carries today. Clusters and membership are maintained here first; activities only refer to the cluster. Cluster totals are derived from the plot activities |
 
 **Corrections:**
 - a wrong area → a sowing that supersedes the old one;
@@ -181,15 +196,15 @@ Nothing changes for the Farmer Registry unless it adopts field verification or c
 | Veterinarian (or a provider registry) | Entity | — | May be in another registry |
 | Livestock events | Occurrence. Types: Born, Vaccinated, Treated, Sold. Context: the animal | **Vaccinated:** verified by a **trusted source** (the vet's authenticated system); approval only `use:campaign-payment` or `use:coverage-figure`; attestation: vaccination certificate. **Sold:** approval when it's an official transfer. **Born:** off unless a birth certificate is issued | Participants: animal (primary), farmer, vet (and dam for Born) |
 
-**Entity effects:**
-- **Born** raises a change request that **creates** the animal;
-- **Sold** raises a change request that **changes the owner**, through the Animal register's approval.
+**Entities first:**
+- a newborn animal is **registered** in the Animal register, then the Born occurrence is recorded;
+- a change of owner goes through the Animal register's **change request** (with its approval), and the Sold occurrence records the sale.
 
-The occurrence remains the history. Current animal status (e.g. Sold, last vaccinated) is **derived** from the events in the context's projection.
+The occurrences are the history. Current animal status (e.g. last vaccinated, sold) is **derived** from the events in the context's projection; the authoritative owner is the Animal register's.
 
 **Corrections:**
 - a wrong batch or dose → a vaccination that supersedes the old one (approval if the type requires it); the certificate is revoked and reissued;
-- a sale that didn't happen → void, plus a change request reverting the owner.
+- a sale that didn't happen → void the Sold occurrence, and correct the owner through the Animal register's own change request.
 
 ## 6. APIs: what changes
 
@@ -210,8 +225,7 @@ The occurrence remains the history. Current animal status (e.g. Sold, last vacci
 |---|---|
 | **Trust (new, common)** | `/trust/*`:<br>• get the trust policy for a register, type or field;<br>• add a trust record (verify, approve, reject, attest, dispute) on any target (record, section, field, change request, occurrence), with evidence;<br>• list a target's trust records and trust status;<br>• list items awaiting a trust step (a work queue per step).<br>`/verifications/*` and `/activity/verify_activity`, `reject_activity` remain as shortcuts onto it. |
 | **Corrections (common)** | `/corrections/*`:<br>• submit a correction on any target, with a reason and the corrected data;<br>• list pending corrections;<br>• decide one.<br>Entity corrections become change requests (existing flow); occurrence corrections become supersedes, held for approval when policy requires. `supersede_activity` and `void_activity` remain. |
-| **Participants** | `append_activity` / `append_activities` accept `participants[]` (role, register or system, ID). `search_activities` filters by participant and role. The profile tab covers every role, not only the subject. |
-| **Entity effects** | Activity detail shows the change requests an occurrence raised, and their status |
+| **Participants** | `append_activity` / `append_activities` accept `participants[]` (role and ID; the type comes from configuration). `search_activities` filters by participant and role. The profile tab covers every role, not only the subject. |
 | **Certificates** | Issue, revoke and list certificates for a record or occurrence, reusing the agent portal's VC issuance, which the staff API calls |
 | **Entity registers** | Locations as named levels on records; reference rules on entity sections; idempotency keys on entity ingestion |
 
@@ -247,18 +261,22 @@ The occurrence remains the history. Current animal status (e.g. Sold, last vacci
 2. **Correction model.** A common correction request with approval by policy, and disputes. Plus partner corrections for occurrences.
 3. **Certificates.** Attestation through VC issuance for occurrences as well as entities, with revoke and reissue on correction.
 4. **Participants.** Named, indexed roles on occurrences; the subject becomes the primary role.
-5. **Entity effects.** Occurrence types that raise change requests on entity registers (birth, sale, cluster enrolment), locally or through the other registry's partner API.
+5. **Entities first.** Existence checks for referenced entities; withdraw temporary IDs, or limit them to capture tools that register the entity first.
 6. **Cluster as an entity in the Crop Sown Registry,** and the crop-change link.
 7. **Shared capabilities on entity registers:** named-level locations, reference rules, idempotent ingestion.
 8. **Beneficiary API for occurrences,** and DCI subscribe/notify for occurrence events.
 
-## 8. Open decisions
+## 8. Decisions
 
-- **Granularity of trust policy on entity fields.** Per section, or per field? Per field is more precise; per section matches today's forms and verification table.
-- **Certificates for plans.** A plan is an intention; the concept notes give it none. Confirm.
-- **Participant IDs across registries.** Should a participant always be typed (register or system plus ID), or may it be a plain ID with a role? Typed IDs are needed for cross-registry lookups.
-- **Where entity effects run.** In the same transaction, which only works when the entity register is in the same registry, or always asynchronously through the outbox? Asynchronous is uniform and works across registries.
-- **Trust status vocabulary** shown to users and partners, e.g. *recorded → verified → approved → attested*, and how *rejected*, *disputed* and *revoked* appear.
+| Question | Decision |
+|---|---|
+| Trust policy on entity registers: per field or per section? | **Per section** |
+| Certificates for plans? | **No.** Certificates only for occurrences that happened |
+| Participant IDs: plain or typed? | **Always typed** (register or system + ID). The activity type supplies the type; submitters send role + ID |
+| Occurrences changing entities (birth creates an animal, sale changes the owner)? | **No: entities first.** The entity register is updated before any occurrence about the entity is recorded |
+| Trust status vocabulary | From standards where they exist: the platform's approval statuses, W3C VC status lists for certificates, FHIR equivalents for the occurrence lifecycle. One summary label: Recorded → Verified → Approved → Attested (section 2) |
+
+**Still open:** withdrawing temporary IDs (section 4) versus keeping them for capture tools that register the entity first.
 
 ## Related
 

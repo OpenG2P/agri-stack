@@ -18,7 +18,7 @@ The Crop Sown Registry is **independent**. It shares data with the Farmer Regist
 
 - **Intercropping** is two contexts on the same plot.
 - **The subject** is the farmer (Farmer Registry ID). The Fayda FAN is carried alongside.
-- **The plot** is a Farmer Registry land record. The plot, farmer and DA are held by other registries, so they are checked for **format only** and never block an entry. A plot created offline (`TMP-…`) is recorded and resolved later.
+- **The plot** is a Farmer Registry land record. The plot, farmer and DA are held by other registries, so they are checked for **format only** and never block an entry. A plot created offline (`TMP-…`) is recorded and resolved later. Under the proposed "entities first" rule ([register model design](register-model-design.md#4-participants-and-entities-first)), the farmer and plot are registered in the Farmer Registry before crop activities are recorded; temporary plot IDs are then under review.
 - **The location** is the plot's **woreda**, chosen from Master Data's geography. It is required when a crop season is planned or sown; later activities take it from their crop season. Every activity stores it with its zone, region and country as named levels, so every figure can be rolled up by level. The registry can't read the plot's location from the Farmer Registry, which may be on another instance, so the woreda is entered.
 
 ## Activity types

@@ -20,9 +20,11 @@ They record where the design discussion has landed. Besides the existing OpenG2P
 | [Policy and consent](policy-and-consent.md) | What gets released; policy vs use case vs consent |
 | [Consent model](consent-model.md) | One consent for the partner, one grant per registry inside CM (proposed) |
 | [Registry model](registry-model.md) | Register, table and activity-register kinds; projections; Layer 2 split |
+| [Register model design](register-model-design.md) | Design note: one register model with entity and occurrence records, a common trust layer (verification, approval, attestation), one correction model, API changes; Farmer, Crop Sown, Livestock worked through |
 | [Register vs activity register](register-vs-activity-register.md) | How the two kinds differ: nature of data, definition, configuration, writing, reading, figures, governance |
 | [Activity register](activity-register.md) | Append-only activity registers (attendance, crop sown): what the registry platform needs, how it is built, where it lives, and how it relates to the Observations design |
 | [Crop Sown Registry](crop-sown-registry.md) | The crop season activity register: activity types, fields, code lists, projection, indicators, channels |
+| [Concept notes review](activity-registry-concept-review.md) | How the Activity Registry concept notes (crop sown, livestock, work log) compare with our activity register, with suggested priorities |
 | [Open items](open-items.md) | Decisions and checks still pending |
 
 ## Components and who talks to whom

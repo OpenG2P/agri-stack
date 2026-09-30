@@ -135,6 +135,7 @@ Geography is stored on every activity as **named levels** (`{"region": {"code": 
 - **Both can live in one registry.** Activities can then refer to the registry's own records (`LOCAL_RECORD`), take their subject and location from them, and appear on those records' profile. Or the activity register can be a registry of its own, like the Crop Sown Registry, referring to another registry's records by ID. Registries share data, never code.
 
 See also:
+- [Register model design](register-model-design.md): the proposal to unify trust and corrections across both kinds, and the API changes that follow;
 - [Activity register](activity-register.md), for the design in full;
 - [Crop Sown Registry](crop-sown-registry.md), for the worked example;
 - [How each registry is built](registry-model.md).

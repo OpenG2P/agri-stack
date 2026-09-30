@@ -19,6 +19,7 @@ The Crop Sown Registry is **independent**. It shares data with the Farmer Regist
 - **Intercropping** is two contexts on the same plot.
 - **The subject** is the farmer (Farmer Registry ID). The Fayda FAN is carried alongside.
 - **The plot** is a Farmer Registry land record. The plot, farmer and DA are held by other registries, so they are checked for **format only** and never block an entry. A plot created offline (`TMP-…`) is recorded and resolved later.
+- **The location** is the plot's **woreda**, chosen from Master Data's geography. It is required when a crop season is planned or sown; later activities take it from their crop season. Every activity stores it with its zone, region and country as named levels, so every figure can be rolled up by level. The registry can't read the plot's location from the Farmer Registry, which may be on another instance, so the woreda is entered.
 
 ## Activity types
 
@@ -89,6 +90,27 @@ One row per crop season:
 
 Each is grouped by crop year and season.
 
+## Reporting by geography
+
+- **Indicators by level:**
+  - area sown by region, by zone and by woreda (with crop);
+  - quantity harvested by region;
+  - average yield by region;
+  - farmers reporting by woreda.
+
+  They sit alongside the existing indicators by crop year, season and crop.
+- **Reporting views** (in the registry's database, for Superset and Insights):
+
+  | View | One row per |
+  |---|---|
+  | `csr_rpt_crop_season` | crop season, with region, zone and woreda codes and names |
+  | `csr_rpt_crop_performance_region` | crop year, season, region, crop |
+  | `csr_rpt_crop_performance_zone` | crop year, season, zone, crop |
+  | `csr_rpt_crop_performance_woreda` | crop year, season, woreda, crop |
+
+  The performance views count crop seasons, farmers and plots; sum planned, sown and harvested area and production; compute yield as production ÷ harvested area; and count infested and damaged crop seasons.
+- **They are plain views over the crop-season projection,** which the platform keeps current, so they need no refresh.
+
 ## Farmer's season summary
 
 For each farmer, crop year and season, the Crop Sown Registry keeps a summary across all their plots and crops. It is an aggregate, `FARMER_SEASON_SUMMARY`, with period key `<crop year>|<season>`. It holds:
@@ -98,7 +120,15 @@ For each farmer, crop year and season, the Crop Sown Registry keeps a summary ac
 - infestations and damage reports;
 - a breakdown by crop.
 
-The period runs over the Ethiopian crop year, Meskerem 1 to the last day of Pagume.
+The period is the season's window in the Ethiopian crop year, following the CSA Agricultural Sample Survey:
+
+| Season | Window | Why |
+|---|---|---|
+| Meher | Meskerem – Yekatit (Sep – Feb) | Meher crops are harvested September to February |
+| Belg | Megabit – Pagume (Mar – Aug) | Belg crops are harvested March to August |
+| Irrigation | Hidar – Ginbot (Nov – May) | The dry season |
+
+The summary's location is the geographic levels all of the farmer's plots share, e.g. one woreda, or only a zone when the plots span woredas. Programmes read it through DCI with record type `spdci-extensions-agri:ActivityAggregate`, keyed by farmer ID.
 
 The summary is recomputed from the crop-season projections after every change, including corrections and voids, and each value is kept in its history.
 
@@ -110,9 +140,19 @@ The summary is recomputed from the crop-season projections after every change, i
 
 ## DCI
 
-`reg_type = CropSown` returns current activities. The consent scopes are the record's top-level keys:
-- `activity`
+A DCI search with `reg_type = CropSown`, by farmer ID, returns one of three record types:
+
+| `reg_record_type` | Returns | Used for |
+|---|---|---|
+| `spdci-extensions-agri:CropActivity` | The farmer's current activities (plans, sowings, observations, harvests) | Evidence, audit |
+| `spdci-extensions-agri:CropSeason` | Each crop season's current state: stage, planned and sown area, seed type, whether sowing was verified, growth and infestation status, harvest, yield, location | **Decisions** such as a fertiliser subsidy or a loan |
+| `spdci-extensions-agri:ActivityAggregate` | The farmer's season summaries across plots and crops | Decisions on the farmer as a whole |
+
+All three share one set of consent scopes, the record's top-level keys:
+- `activity` (activities only)
 - `crop_season`
 - `measures`
 - `farmer_reference`
 - `location`
+
+A partner's policy therefore covers all three record types the same way.

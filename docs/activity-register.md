@@ -107,8 +107,8 @@ The activity model is **its own base class**, `G2PActivity`, next to `G2PRegiste
 | Table | Purpose |
 |---|---|
 | `g2p_register_definitions` (existing) | An activity register is a row with `register_purpose = ACTIVITY` |
-| `g2p_activity_<name>` (per register) | The activities. Standard fields plus a JSONB `payload`, and payload fields promoted to typed columns for filtering, indexes, data policies and indicators. **Partitioned by year** of `occurred_at`, plus a default partition. |
-| `g2p_activity_projection_<name>` (per register) | The current state, one row per context |
+| `g2p_activity_<name>` (per register) | The activities. Standard fields plus a JSONB `payload`, and payload fields promoted to typed columns for filtering, indexes, data policies and indicators. Each activity also carries its location as named levels (`geo_dimensions`; see [Geography and roll-ups](#geography-and-roll-ups)). **Partitioned by year** of `occurred_at`, plus a default partition. |
+| `g2p_activity_projection_<name>` (per register) | The current state, one row per context, with the context's location (`geo_dimensions`) |
 | `g2p_activity_types` | Per type: JSON Schema, form layout, rules (repeatable, uniqueness, prior types with warn/block, due window, backdating limit, verification), reference rules, Ethiopian-calendar fields |
 | `g2p_activity_contexts` | Grouping key (e.g. plot × year × season × crop) with subject, attributes and open/closed status |
 | `g2p_activity_period_locks` | Closed periods, with who reopened them and why |
@@ -144,7 +144,8 @@ The activity model is **its own base class**, `G2PActivity`, next to `G2PRegiste
    - Temporary IDs: recorded now and resolved later.
 4. **Find or open the context** and lock it, so concurrent writes to one context are serialised.
 5. **Check rules:** dates, closed periods, repeatability, uniqueness, sequence. Warnings are stored on the activity; blocking rules reject it.
-6. **Save.** Insert the activity and its idempotency key, recompute the context's projection in the same transaction, and write an outbox event.
+6. **Locate it:** record where the activity happened as named Master Data levels ([Geography and roll-ups](#geography-and-roll-ups)).
+7. **Save.** Insert the activity and its idempotency key, recompute the context's projection in the same transaction, and write an outbox event.
 
 **Corrections:**
 - **Supersede:** a new activity replaces the old one; the old one is kept as `SUPERSEDED`.
@@ -158,9 +159,37 @@ The activity model is **its own base class**, `G2PActivity`, next to `G2PRegiste
 |---|---|
 | Staff API `/activity/*` | Registers and types (types include code-list options for forms); append (single and batch, atomic or per item); supersede, void, verify, reject; get, search, timeline; contexts (open, close, reopen); work list; projections; indicators; period locks; temporary references; rebuild projections; **a record's activities and summaries across registers** (`get_subject_activities`, for the profile tab); **the latest activity of a type** (`get_latest_activity`, for form defaults); **aggregates and their history**; **a type's schema versions** |
 | Partner API `/partner/activity/append_activities` | DCI-style signed envelope (PM keys); per-item outcomes |
-| Partner API `/dci/registry/sync/search` | `reg_type` can be an activity register. Returns current activities only, rendered by the register's DCI template, with the consent clamp applied as for records. |
+| Partner API `/dci/registry/sync/search` | `reg_type` can be an activity register. Returns current activities only, rendered by the register's DCI template, with the consent clamp applied as for records. The `reg_record_type` picks what comes back, by subject ID:<br>• **activities** (default);<br>• **current state per context**, when the record type names a context type (e.g. `spdci-extensions-agri:CropSeason` → `CROP_SEASON`): each crop season's stage, areas, yield and verification, from the projection. This is what a subsidy or loan decision reads;<br>• **aggregates**, when it ends in `Aggregate` (e.g. a farmer's season summaries).<br>The register shapes the state and aggregate records (domain hooks `dci_state_record`, `dci_aggregate_record`) onto its own consent scopes, so the consent clamp applies as for activities. |
 | Celery | `activity_outbox_worker` (outgest; enrichment and aggregates through the register's `enrich` and `aggregate` hooks), `activity_reconcile_worker` (repairs projection drift), `activity_partition_worker` (next year's partitions), `activity_odk_pull_worker` (ODK Central) |
 | Staff UI | Activity registers are listed with the other registers: the home page's Registers card counts them (with their number of contexts, e.g. crop seasons) and its register dropdown offers them as "(Activity)", opening `/activity/<register>`. Per register: activities (filters, detail panel with verify/reject/correct/void), current state, work list, indicators, record (single or batch, form generated from the JSON Schema, Ethiopian-calendar date picker), settings. Per context: current state, timeline, record the next activity. |
+
+### Geography and roll-ups
+
+An activity register piles up activities. People then ask for figures by region, zone or woreda, or for one plot or farmer. So **every activity records where it happened**, as the named levels Master Data holds:
+
+```
+geo_dimensions = {"country": {"code": "ET", "name": "Ethiopia"},
+                  "region":  {"code": "ET04", "name": "Oromia"},
+                  "zone":    {"code": "ET0406", "name": "North Shewa (OR)"},
+                  "woreda":  {"code": "ET040611", "name": "Sheno town"}}
+```
+
+**Where the location comes from**, in order:
+1. **The activity itself:** a payload field with a GEO rule marked `"location": true` (else `geo_lowest_level_value_id`). This is what was observed, e.g. the plot's woreda.
+2. **The subject's record, when it is in the same registry:** that record's location, else its parent's (a plot without one takes its farmer's).
+3. **The activity's context:** the location of its latest activity that has one, so later stages of a crop season needn't repeat it.
+
+**It's a snapshot, taken when the activity is written.** In the Observations design the location is resolved from the subject's record when roll-ups are computed. A snapshot works when the subject is in another registry (the Crop Sown Registry on its own instance knows only what the activity says), and it keeps history stable when a record is later edited.
+
+**How it's rolled up:**
+- **Projections** carry their context's location.
+- **Indicators** group and filter by any level with `geo:<level>`, e.g. `"group_by": ["crop_year", "season", "geo:region", "crop"]`. The result has the level's code and name.
+- **Aggregates** carry the location in `geo_dimensions`. The platform fills it from the activity unless the domain chooses one; the Crop Sown Registry uses the levels all of a farmer's plots share.
+- **Reporting views**, one per registry, flatten the levels into columns and aggregate by level for Superset and Insights. They are plain views over the projection, which is already current, so there is no refresh job.
+
+**Two kinds of numbers:**
+- **Per subject** (a farmer's season, a plot's crop season): projections and aggregates. They are what a decision reads, e.g. fertiliser subsidy eligibility, through the staff API or DCI.
+- **Per area:** indicators and reporting views over the projections. Area totals are computed from projections rather than stored as aggregates, since one activity would otherwise mean recomputing a whole woreda's or region's totals.
 
 **Permissions:** `activity:view`, `activity:create`, `activity:correct`, `activity:verify`, `activity:configure`. They are mapped onto the existing IAM roles by the registry's IAM registration.
 
@@ -189,6 +218,7 @@ The registry platform's [Observations design](https://docs.openg2p.org/products/
 | Storage | One generic platform table for every type in every register; types added through an API, with no code | One table per register from the extension, with typed columns, yearly partitions and an append-only trigger | **Keep per-register tables.** Both deployments of crop sown ship an extension, and crop sown needs typed columns, partitions and a domain service. A generic, code-free table is deferred ([open items](open-items.md)). |
 | Grouping a lifecycle | An explicit `FOLLOWS` link, chosen by the agent, one step at a time | A context derived from the payload (plot × year × season × crop) | **Keep contexts.** They handle an 8-step lifecycle and intercropping. An explicit link is an option for types that can't derive a key. |
 | Roll-ups | Asynchronous: optional enrichment, then adapter-computed aggregates per subject and period, with history | Synchronous: a projection per context, recomputed in the same transaction, plus declarative indicators | **Keep projections for current state; add aggregates and enrichment as an asynchronous layer on top.** |
+| Geography | Resolved from the subject's record (walking Land → Individual → Household) when aggregates are computed; `geo_dimensions` holds code and name per level; a reporting view groups by `geo_1…geo_5` | Named levels snapshotted on each activity when written, from the activity, the subject's record or the context | **Named levels, as there; snapshot rather than live resolution**, so it works when the subject is in another registry. See [Geography and roll-ups](#geography-and-roll-ups). |
 | Code lists | The registry's local `G2PAttribute` tables | Read live from Master Data | **Ours.** The local tables no longer exist in the platform. |
 | Offline sync | Batch endpoint with no idempotency | Idempotency key, temporary IDs | Ours |
 | Governance | Not covered | Verification, period locks, reference rules, DCI with consent, data policies, permissions | Ours |
@@ -201,6 +231,11 @@ The registry platform's [Observations design](https://docs.openg2p.org/products/
   - **`enrich`**, e.g. weather or satellite data, stored beside the activity and never inside it;
   - **`aggregate`**, roll-ups per subject and period, recomputed from current data, with history. The Crop Sown Registry's is a farmer's season summary across plots and crops.
 - **Form defaults** from the latest activity of the same type for the same context or subject.
+- **Geography as named levels** (`geo_dimensions`), filled by the platform, on activities, projections and aggregates; **indicators by level**; a **reporting view per registry** by level.
+- **Season windows** in the domain code: a season's period is its own date range, not just its year.
+- **The same data for partners:** aggregates are readable through DCI with the consent clamp, not only in the staff UI.
+
+Still to take ([open items](open-items.md)): per-type switches for enrichment and aggregation with per-stage status, a beneficiary API, and agent-app capture.
 
 Not taken: offline drafts with a sync badge (a client concern; the platform already has idempotency and temporary IDs), and choice chips (the forms already render code lists as selections).
 

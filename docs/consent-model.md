@@ -2,7 +2,7 @@
 
 # Consent model: one consent for the partner, one grant per registry inside CM
 
-> **Status: proposed, under discussion.** This replaces the earlier idea of issuing one consent object per registry, which was suggested only to fit CM's current rule of one `data_controller` per consent. The diagrams haven't been updated yet.
+> **Status: partly built (October 2026).** A partner-signed consent can carry one **grant per registry** (`grants: [{data_controller, data_scopes}]`), and each registry validates its own grant (it sends its `data_controller` to CM `/validate`). A partner can be bound to several registries in CM, each with its own policy. Replay is per consent and registry, and each registry gets its own receipt. Still to do: presenting a consent collected through CM (farmer approval in CM) at a registry, and policies held in Partner Management. The diagrams haven't been updated yet.
 
 ## The problem
 

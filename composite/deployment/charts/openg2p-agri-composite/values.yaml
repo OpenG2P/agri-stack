@@ -1,0 +1,358 @@
+global:
+  namespace: "" # empty => the install namespace (.Release.Namespace)
+
+  # Public hostname partners call (outside the cluster), through the Istio
+  # "internal" gateway like the registries' partner APIs.
+  compositeHostname: 'agri-composite.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+
+  # The composite's own Partner Management ID: header.sender_id towards the
+  # registries and in responses; partners send it as header.receiver_id.
+  compositePartnerId: agri-composite
+
+  # Partner Management partner-api (partner public keys), as the registries use it.
+  partnerManagementApiUrl: http://commons-services-pm-partner-api
+
+  # Audit Manager base URL (CloudEvents). Empty => auditing off.
+  auditManagerUrl: 'http://commons-services-auditmanager:80'
+
+composite:
+  enabled: true
+  nameOverride: api
+  hostname: '{{ tpl .Values.global.compositeHostname $ }}'
+
+  replicaCount: 1
+  # Stateless pods: scale horizontally on CPU. Memory-based autoscaling is off on
+  # purpose (Python RSS does not shrink, so a memory HPA never scales back down).
+  # Rate limits are per pod and worker; global limits belong to the API gateway.
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: null
+  updateStrategy:
+    type: RollingUpdate
+  serviceAccount:
+    create: false
+    name: ""
+
+  image:
+    repository: openg2p/openg2p-agri-composite-api
+    # Placeholder: CI injects the version at package time.
+    tag: "develop"
+    pullPolicy: Always
+
+  # gunicorn worker processes per pod (uvicorn workers; each keeps its own
+  # connection pool and key cache).
+  workers: 2
+
+  # The image runs as uid 1001 and writes nothing; the root filesystem is
+  # read-only with an emptyDir at /tmp (gunicorn's worker heartbeat).
+  podSecurityContext:
+    enabled: true
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    enabled: true
+    runAsNonRoot: true
+    runAsUser: 1001
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+
+  containerPort: 8000
+  service:
+    type: ClusterIP
+    port: 80
+    externalTrafficPolicy: Cluster
+
+  istio:
+    enabled: true
+    virtualservice:
+      enabled: true
+      host: '{{ tpl .Values.global.compositeHostname $ }}'
+      gateway: "internal"
+      destination: '{{ .Release.Name }}-api'
+      destinationPort: 80
+      prefix: /
+      rewriteUri: ""
+    gateway:
+      enabled: false
+
+  # ── Composite signing key (.p12) from a Secret you create ─────────────────
+  # kubectl -n <ns> create secret generic agri-composite-signing \
+  #   --from-file=composite.p12=./composite.p12 --from-literal=password='<p12 password>' \
+  #   --from-literal=kid=agri-composite-2026-01 --from-literal=algorithm=auto
+  # kid: label sent in the JWS header (blank → the certificate's SHA-256 thumbprint);
+  # it must match the kid registered for the composite in Partner Management.
+  # algorithm: auto (from the key type: EC → ES256, Ed25519 → EdDSA, RSA → RS256).
+  signingKey:
+    secretName: agri-composite-signing
+    p12Key: composite.p12
+    passwordKey: password
+    kidKey: kid
+    algorithmKey: algorithm
+    mountPath: /app/secrets
+
+  # ── Registries (data controllers): DCI sync search URL per controller ID ──
+  # Partner Management has no registry endpoints yet, so they are set here.
+  # partnerId (optional): the registry's PM partner ID — when set, the
+  # registry's response signature is verified against its PM key.
+  registries:
+    farmer-registry:
+      url: http://fr-partner-api/dci/registry/sync/search
+      partnerId: ""
+    crop-sown-registry:
+      url: http://csr-partner-api/dci/registry/sync/search
+      partnerId: ""
+
+  # ── Use cases: name → YAML (one use case per entry) ─────────────────────
+  # Edit in Rancher's "Edit YAML" values view. Rendered into a ConfigMap
+  # mounted at useCasesMountPath; pods reload changed files every
+  # useCasesReloadSeconds without a restart. Set existingUseCasesConfigMap to
+  # mount your own ConfigMap instead (keys = <name>.yaml).
+  existingUseCasesConfigMap: ""
+  useCasesMountPath: /app/config/use-cases
+  useCasesReloadSeconds: 30
+  useCases:
+    # Kept identical to composite/use-cases/loan-profile.yaml (a test checks it).
+    loan-profile: |
+      # Sample use case: a farmer's profile for a loan decision.
+      #
+      # Farmer Registry: who the farmer is, their land and declared main crops.
+      # Crop Sown Registry: what they sowed — crop seasons (one per plot and crop) and
+      # season summaries — filtered on crop_year / season when given.
+      #
+      # The Crop Sown Registry knows the farmer by farmer ID, so both crop sources
+      # depend on the farmer source and read FARMER_ID from its record (or use the
+      # subject itself when the partner sends a FARMER_ID).
+      #
+      # Consent (one consent, a grant per registry). The farmer record must include
+      # farmer_personal_details, since that is where the farmer ID is read from:
+      #   farmer-registry:    farmer_personal_details, family_details, farm_details, main_crops
+      #   crop-sown-registry: farmer_reference, crop_season, measures, location
+      #
+      # Template note: keep a space between consecutive braces ("} }", "{ {") so
+      # literal JSON never reads as a Jinja "{{ … }}".
+
+      use_case: loan-profile
+      version: 1.0.0
+      status: published
+      title: Farmer loan profile
+      description: >-
+        Identity, location, land and declared crops from the Farmer Registry, and crop
+        seasons and season summaries from the Crop Sown Registry, for a loan decision.
+        Pass crop_year and season to get one season (the total area sown is then that
+        season's); without them, all of the farmer's seasons come back, newest first.
+
+      policy: credit-assessment
+      purpose: credit-assessment
+      consent:
+        required: true
+
+      # Interim stand-in for the PM policy association (PM has no policies yet).
+      allowed_partners: [bank-a]
+
+      input:
+        subject:
+          id_types: [FAYDA_FAN, FARMER_ID]
+        parameters:
+          crop_year:
+            type: integer
+            description: Crop year, e.g. 2019 (Ethiopian calendar year the season belongs to)
+            min: 1990
+            max: 2100
+          season:
+            type: string
+            description: Season code
+            enum: [SEASON_MEHER, SEASON_BELG, SEASON_IRRIGATION]
+        batch: { max_subjects: 1 }
+
+      sources:
+        - id: farmer
+          controller: farmer-registry
+          requirement: mandatory
+          dci:
+            reg_type: Farmer
+            reg_record_type: spdci-extensions-dci:Farmer
+            query_template: |
+              {%- set field = 'foundational_id' if subject.type == 'FAYDA_FAN' else 'functional_record_id' -%}
+              {"query_type": "expression",
+               "query": {"type": "expression",
+                         "value": {"expression": {"query": {"{{ field }}": {"$eq": {{ subject.value | tojson }} } } } } },
+               "pagination": {"page_size": 1, "page_number": 1} }
+          timeout_ms: 3000
+          retries: 1
+
+        - id: season_summaries
+          controller: crop-sown-registry
+          requirement: optional
+          depends_on: [farmer]
+          dci:
+            reg_type: CropSown
+            reg_record_type: spdci-extensions-agri:ActivityAggregate
+            query_template: |
+              {%- set ns = namespace(fid=none) -%}
+              {%- if subject.type == 'FARMER_ID' -%}{%- set ns.fid = subject.value -%}{%- endif -%}
+              {%- for rec in sources.farmer.records -%}
+                {%- for ident in rec.farmer_personal_details.member_identifier or [] -%}
+                  {%- if ns.fid is none and ident.identifier_type == 'FARMER_ID' and ident.identifier_value -%}
+                    {%- set ns.fid = ident.identifier_value -%}
+                  {%- endif -%}
+                {%- endfor -%}
+              {%- endfor -%}
+              {"query_type": "expression",
+               "query": {"type": "expression",
+                         "value": {"expression": {"query": {
+                           "subject_id": {{ ns.fid | tojson }},
+                           "aggregate_type": "FARMER_SEASON_SUMMARY"
+                           {%- if parameters.crop_year is not none %}, "crop_year": {{ parameters.crop_year | tojson }}{% endif %}
+                           {%- if parameters.season %}, "season": {{ parameters.season | tojson }}{% endif %} } } } },
+               "pagination": {"page_size": 20, "page_number": 1} }
+          timeout_ms: 3000
+          retries: 1
+
+        - id: crop_seasons
+          controller: crop-sown-registry
+          requirement: optional
+          depends_on: [farmer]
+          dci:
+            reg_type: CropSown
+            reg_record_type: spdci-extensions-agri:CropSeason
+            query_template: |
+              {%- set ns = namespace(fid=none) -%}
+              {%- if subject.type == 'FARMER_ID' -%}{%- set ns.fid = subject.value -%}{%- endif -%}
+              {%- for rec in sources.farmer.records -%}
+                {%- for ident in rec.farmer_personal_details.member_identifier or [] -%}
+                  {%- if ns.fid is none and ident.identifier_type == 'FARMER_ID' and ident.identifier_value -%}
+                    {%- set ns.fid = ident.identifier_value -%}
+                  {%- endif -%}
+                {%- endfor -%}
+              {%- endfor -%}
+              {"query_type": "expression",
+               "query": {"type": "expression",
+                         "value": {"expression": {"query": {
+                           "subject_id": {{ ns.fid | tojson }}
+                           {%- if parameters.crop_year is not none %}, "crop_year": {{ parameters.crop_year | tojson }}{% endif %}
+                           {%- if parameters.season %}, "season": {{ parameters.season | tojson }}{% endif %} } } } },
+               "pagination": {"page_size": 100, "page_number": 1} }
+          timeout_ms: 3000
+          retries: 1
+
+      response:
+        # JSONPath over {subject, parameters, sources: {<id>: {status, records: [...]}}}.
+        mapping:
+          farmer.name:        "$.sources.farmer.records[0].farmer_personal_details.demographic_info.name"
+          farmer.sex:         "$.sources.farmer.records[0].farmer_personal_details.demographic_info.sex"
+          farmer.birth_date:  "$.sources.farmer.records[0].farmer_personal_details.demographic_info.birth_date"
+          farmer.identifiers: "$.sources.farmer.records[0].farmer_personal_details.member_identifier"
+          farmer.location:    "$.sources.farmer.records[0].family_details.place"
+          farmer.main_crops:  "$.sources.farmer.records[0].main_crops"
+          land.parcels:       "$.sources.farmer.records[0].farm_details"
+          crops.seasons:      "$.sources.crop_seasons.records"
+          crops.season_summaries: "$.sources.season_summaries.records"
+        # Functions: sum, count, min, max, first, round. The output so far is at $.data.
+        derived:
+          land.parcel_count: "count($.sources.farmer.records[0].farm_details)"
+          # Sum of each parcel's land_size, in the parcels' unit (farm_details[].measurement).
+          land.total_size:   "round(sum($.sources.farmer.records[0].farm_details[*].land_size), 4)"
+          crops.total_area_sown_ha: "round(sum($.sources.crop_seasons.records[*].measures.area_sown_ha), 4)"
+        source_status: true
+
+      execution:
+        overall_timeout_ms: 8000
+        partial_response: allowed   # a failing mandatory source (farmer) fails the request
+
+      limits:
+        rate_per_partner: 60/min
+
+  envVars:
+    AGRI_COMPOSITE_APP_PORT: '{{ .Values.containerPort }}'
+    AGRI_COMPOSITE_NO_OF_WORKERS: '{{ .Values.workers }}'
+    AGRI_COMPOSITE_COMPOSITE_PARTNER_ID: '{{ tpl .Values.global.compositePartnerId $ }}'
+    AGRI_COMPOSITE_PARTNER_MGMT_API_URL: '{{ tpl .Values.global.partnerManagementApiUrl $ }}'
+    AGRI_COMPOSITE_AUDIT_MANAGER_URL: '{{ tpl .Values.global.auditManagerUrl $ }}'
+    AGRI_COMPOSITE_USE_CASES_DIR: '{{ .Values.useCasesMountPath }}'
+    AGRI_COMPOSITE_USE_CASES_RELOAD_SECONDS: '{{ .Values.useCasesReloadSeconds }}'
+    AGRI_COMPOSITE_SIGNING_P12_PATH: '{{ .Values.signingKey.mountPath }}/{{ .Values.signingKey.p12Key }}'
+    AGRI_COMPOSITE_LOGGING_LEVEL: INFO
+    # Partner request freshness window (header.message_ts), seconds.
+    AGRI_COMPOSITE_REQUEST_MAX_SKEW_SECONDS: "300"
+    # Outbound connection pool per worker.
+    AGRI_COMPOSITE_HTTP_MAX_CONNECTIONS: "200"
+    AGRI_COMPOSITE_HTTP_MAX_KEEPALIVE_CONNECTIONS: "50"
+    # Partner key cache (PM): soft TTL, last-known-good during a PM outage.
+    AGRI_COMPOSITE_PARTNER_KEY_CACHE_TTL_SECONDS: "300"
+    AGRI_COMPOSITE_PARTNER_KEY_HARD_TTL_SECONDS: "21600"
+
+  envVarsFrom:
+    AGRI_COMPOSITE_SIGNING_P12_PASSWORD:
+      secretKeyRef:
+        name: '{{ .Values.signingKey.secretName }}'
+        key: '{{ .Values.signingKey.passwordKey }}'
+        optional: true
+    AGRI_COMPOSITE_SIGNING_KID:
+      secretKeyRef:
+        name: '{{ .Values.signingKey.secretName }}'
+        key: '{{ .Values.signingKey.kidKey }}'
+        optional: true
+    AGRI_COMPOSITE_SIGNING_ALGORITHM:
+      secretKeyRef:
+        name: '{{ .Values.signingKey.secretName }}'
+        key: '{{ .Values.signingKey.algorithmKey }}'
+        optional: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+  startupProbe:
+    enabled: true
+    httpGet:
+      path: /ping
+      port: http
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 30
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /ping
+      port: http
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 6
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /ping
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+
+# ── Sanity (post-install / post-upgrade hook) ───────────────────────────────
+# Pings the API and lists the published use cases, using the API image itself
+# (no separate sanity image). Creates no data. A failure fails the release;
+# failOnError: false (values only) makes it report-only.
+sanity:
+  enabled: true
+  baseUrl: 'http://{{ .Release.Name }}-api'
+  readinessTimeout: 180
+  failOnError: true
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

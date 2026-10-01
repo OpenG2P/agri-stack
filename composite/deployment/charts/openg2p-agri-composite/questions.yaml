@@ -1,0 +1,101 @@
+questions:
+# ------------------------------ General -----------------------------
+# Use cases are not in this form: edit composite.useCases in the "Edit YAML"
+# view of the values, or set composite.existingUseCasesConfigMap.
+- variable: global.compositeHostname
+  description: Public hostname partners call (Istio internal gateway). The namespace segment defaults to the install namespace.
+  type: string
+  label: Composite Hostname
+  group: General
+- variable: composite.image.tag
+  description: Container image tag to deploy (e.g. develop or a release like 1.0.0)
+  type: string
+  default: develop
+  label: Image Tag
+  group: General
+- variable: composite.existingUseCasesConfigMap
+  description: "Optional: name of your own ConfigMap of use cases (keys <name>.yaml). Empty = use composite.useCases from the values (edit them in Edit YAML)."
+  type: string
+  label: Existing Use-Case ConfigMap
+  group: General
+- variable: composite.useCasesReloadSeconds
+  description: How often pods check the use-case files for changes (seconds; 0 = never, restart to apply)
+  type: int
+  default: 30
+  label: Use-Case Reload Interval
+  group: General
+
+# ---------------------------- Integration ---------------------------
+- variable: global.compositePartnerId
+  description: The composite's partner ID in Partner Management (its key must be registered there). Registries see it as the sender; partners address it as the receiver.
+  type: string
+  default: agri-composite
+  label: Composite Partner ID
+  group: Integration
+- variable: global.partnerManagementApiUrl
+  description: Partner Management partner-api URL (partner public keys)
+  type: string
+  default: http://commons-services-pm-partner-api
+  label: Partner Management URL
+  group: Integration
+- variable: global.auditManagerUrl
+  description: Audit Manager base URL for audit events. Empty disables auditing.
+  type: string
+  default: http://commons-services-auditmanager:80
+  label: Audit Manager URL
+  group: Integration
+- variable: composite.registries.farmer-registry.url
+  description: Farmer Registry DCI sync search URL (in-cluster service of its partner API)
+  type: string
+  default: http://fr-partner-api/dci/registry/sync/search
+  label: Farmer Registry Search URL
+  group: Integration
+- variable: composite.registries.crop-sown-registry.url
+  description: Crop Sown Registry DCI sync search URL (in-cluster service of its partner API)
+  type: string
+  default: http://csr-partner-api/dci/registry/sync/search
+  label: Crop Sown Registry Search URL
+  group: Integration
+
+# ---------------------------- Signing key ---------------------------
+- variable: composite.signingKey.secretName
+  description: "Secret holding the composite's signing key: keys composite.p12 (file), password, and optionally kid and algorithm. Create it before installing (Storage → Secrets, or kubectl create secret generic)."
+  type: string
+  default: agri-composite-signing
+  label: Signing Key Secret
+  group: Signing key
+
+# ----------------------------- Scaling ------------------------------
+- variable: composite.autoscaling.enabled
+  description: Autoscale the stateless API pods on CPU
+  type: boolean
+  default: true
+  label: Enable Autoscaling
+  group: Scaling
+- variable: composite.autoscaling.minReplicas
+  description: Minimum number of API pods
+  type: int
+  default: 1
+  label: Min Replicas
+  group: Scaling
+  show_if: composite.autoscaling.enabled=true
+- variable: composite.autoscaling.maxReplicas
+  description: Maximum number of API pods
+  type: int
+  default: 5
+  label: Max Replicas
+  group: Scaling
+  show_if: composite.autoscaling.enabled=true
+- variable: composite.replicaCount
+  description: Fixed number of API pods (when autoscaling is off)
+  type: int
+  default: 1
+  label: Replica Count
+  group: Scaling
+  show_if: composite.autoscaling.enabled=false
+- variable: composite.workers
+  description: gunicorn worker processes per pod
+  type: int
+  default: 2
+  label: Workers per Pod
+  group: Scaling

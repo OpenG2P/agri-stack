@@ -1,0 +1,18 @@
+# Helm (fetched chart dependencies)
+deployment/charts/*/charts/
+deployment/charts/*/Chart.lock
+deployment/charts/*/*.tgz
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+
+# Partner kit output: test keys and keystores — never commit private keys
+scripts/kit-out/
+*.p12
+*.pem

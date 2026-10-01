@@ -1,0 +1,474 @@
+"""Serving one use-case query, end to end. Framework-free (tested directly).
+
+Partner → composite: a signed envelope ``{signature, header, message}``.
+Steps: verify the partner's signature (PM key, fail closed) → resolve the use
+case → allowed partner → validate input → rate limit → consent checks → run the
+sources as a DAG → partial-response rule → mapping and derived values → sign
+the response. Nothing is stored; logs carry the request ID, use case, partner,
+statuses and timings only.
+"""
+
+import asyncio
+import logging
+import time
+import uuid
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import httpx
+
+from . import dci
+from .audit import AuditEmitter
+from .consent import ConsentError, check_consent, decode_claims
+from .crypto import CompositeCrypto
+from .expr import evaluate, set_path
+from .loader import CompiledUseCase, UseCaseRegistry
+from .models import ParameterError, coerce_parameter
+from .ratelimit import RateLimiter
+from .templates import TemplateRenderError, render_query
+
+_logger = logging.getLogger("agri_composite.engine")
+
+
+class QueryError(Exception):
+    def __init__(self, http_status: int, code: str, message: str, sources: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.http_status = http_status
+        self.code = code
+        self.message = message
+        self.sources = sources
+
+
+@dataclass
+class SourceResult:
+    status: str
+    records: List[Dict[str, Any]] = field(default_factory=list)
+    detail: Optional[str] = None
+    duration_ms: int = 0
+    attempts: int = 0
+    called: bool = False
+
+    def public(self) -> Dict[str, Any]:
+        out = {"status": self.status}
+        if self.detail:
+            out["detail"] = self.detail
+        return out
+
+
+@dataclass
+class EngineSettings:
+    composite_partner_id: str = "agri-composite"
+    request_max_skew_seconds: int = 300
+    default_source_timeout_ms: int = 5000
+    default_overall_timeout_ms: int = 10000
+    # controller id -> {"url", "partner_id", "receiver_id"}
+    registries: Dict[str, Dict[str, str]] = field(default_factory=dict)
+
+
+class CompositeEngine:
+    def __init__(
+        self,
+        settings: EngineSettings,
+        registry: UseCaseRegistry,
+        crypto: CompositeCrypto,
+        client_getter: Callable[[], httpx.AsyncClient],
+        audit: Optional[AuditEmitter] = None,
+        limiter: Optional[RateLimiter] = None,
+    ):
+        self.settings = settings
+        self.registry = registry
+        self.crypto = crypto
+        self._client = client_getter
+        self.audit = audit or AuditEmitter("", client_getter)
+        self.limiter = limiter or RateLimiter()
+
+    # ── partner-facing entry point ───────────────────────────────────────────
+
+    async def handle_query(self, use_case_ref: str, body: Any, header_major: Optional[int] = None) -> Tuple[int, Dict[str, Any]]:
+        started = time.monotonic()
+        request_id = str(uuid.uuid4())
+        header = body.get("header") if isinstance(body, dict) else None
+        partner_id = header.get("sender_id") if isinstance(header, dict) else None
+        in_reply_to = header.get("message_id") if isinstance(header, dict) else None
+        compiled: Optional[CompiledUseCase] = None
+        subject = None
+        statuses: Dict[str, SourceResult] = {}
+        found: Dict[str, Any] = {}
+        try:
+            compiled, subject = await self._authorise(use_case_ref, body, header_major, found)
+            message = body["message"]
+            parameters = self._validate_parameters(compiled, message.get("parameters"))
+            self._rate_limit(compiled, partner_id)
+            granted = await self._check_consent(compiled, message, subject, partner_id)
+            self._emit(compiled, "request", request_id, partner_id, "success")
+            statuses = await self.run_sources(
+                compiled, subject, parameters, message.get("consent_jws"), partner_id, request_id, granted
+            )
+            self._apply_partial_rule(compiled, statuses)
+            data = self.assemble(compiled, subject, parameters, statuses)
+            msg: Dict[str, Any] = {
+                "use_case": compiled.ref,
+                "version": compiled.spec.version,
+                "request_id": request_id,
+                "subject": subject,
+            }
+            if compiled.spec.response.source_status:
+                msg["sources"] = {sid: r.public() for sid, r in statuses.items()}
+            msg["data"] = data
+            http_status, outcome, reason = 200, "success", None
+            envelope = await self._envelope(partner_id, in_reply_to, msg, status="succ")
+        except QueryError as e:
+            compiled = compiled or found.get("compiled")
+            msg = {"use_case": compiled.ref if compiled else use_case_ref, "request_id": request_id}
+            if subject:
+                msg["subject"] = subject
+            if e.sources is not None:
+                msg["sources"] = e.sources
+            msg["error"] = {"code": e.code, "message": e.message}
+            http_status = e.http_status
+            outcome = "denied" if http_status in (401, 403) else "failure"
+            reason = e.code
+            if compiled is not None and not statuses and http_status < 500:
+                self._emit(compiled, "request", request_id, partner_id, outcome, reason)
+            envelope = await self._envelope(partner_id, in_reply_to, msg, status="rjct", reason=(e.code, e.message))
+        duration = int((time.monotonic() - started) * 1000)
+        _logger.info(
+            "query request_id=%s use_case=%s partner=%s http=%s outcome=%s sources=%s duration_ms=%d",
+            request_id,
+            compiled.ref if compiled else use_case_ref,
+            partner_id,
+            http_status,
+            reason or outcome,
+            {sid: (r.status, r.duration_ms) for sid, r in statuses.items()},
+            duration,
+        )
+        if compiled is not None:
+            self._emit(
+                compiled, "response", request_id, partner_id, outcome, reason,
+                {"http_status": http_status, "duration_ms": duration,
+                 "sources": {sid: r.status for sid, r in statuses.items()}},
+            )
+        if envelope is None:  # could not sign
+            return 500, {
+                "signature": "",
+                "header": self._response_header(partner_id, in_reply_to, "rjct", ("signing_unavailable", "the composite cannot sign responses")),
+                "message": {"request_id": request_id, "error": {"code": "signing_unavailable", "message": "the composite cannot sign responses; check its signing key"}},
+            }
+        return http_status, envelope
+
+    # ── steps ────────────────────────────────────────────────────────────────
+
+    async def _authorise(self, use_case_ref, body, header_major, found):
+        if not isinstance(body, dict):
+            raise QueryError(400, "invalid_envelope", "body must be a JSON object {signature, header, message}")
+        signature, header, message = body.get("signature"), body.get("header"), body.get("message")
+        if not isinstance(signature, str) or not isinstance(header, dict) or not isinstance(message, dict):
+            raise QueryError(400, "invalid_envelope", "body needs signature (string), header and message (objects)")
+        sender = header.get("sender_id")
+        if not sender or not isinstance(sender, str):
+            raise QueryError(400, "invalid_envelope", "header.sender_id is required")
+        receiver = header.get("receiver_id")
+        if receiver and receiver != self.settings.composite_partner_id:
+            raise QueryError(400, "wrong_receiver", f"header.receiver_id must be '{self.settings.composite_partner_id}'")
+        self._check_freshness(header.get("message_ts"))
+
+        try:
+            compiled = self.registry.get(use_case_ref, header_major)
+        except ValueError as e:
+            raise QueryError(400, "invalid_use_case", str(e)) from None
+        if compiled is None:
+            raise QueryError(404, "unknown_use_case", f"no published use case '{use_case_ref}'")
+        found["compiled"] = compiled
+
+        # Fail closed: no key, unknown partner or a bad signature all reject.
+        if not await self.crypto.verify_detached(signature, {"header": header, "message": message}, sender):
+            raise QueryError(401, "signature_invalid", "the request signature does not verify against the sender's Partner Management key")
+
+        allowed = compiled.spec.allowed_partners
+        if "*" not in allowed and sender not in allowed:
+            raise QueryError(403, "partner_not_allowed", f"partner '{sender}' may not use {compiled.ref}")
+
+        subject = message.get("subject")
+        if not isinstance(subject, dict) or not isinstance(subject.get("type"), str) or not subject.get("type") \
+                or not isinstance(subject.get("value"), str) or not subject.get("value").strip():
+            raise QueryError(400, "invalid_input", "message.subject needs type and value (strings)")
+        if subject["type"] not in compiled.spec.input.subject.id_types:
+            raise QueryError(400, "invalid_input", f"subject type must be one of {compiled.spec.input.subject.id_types}")
+        return compiled, {"type": subject["type"], "value": subject["value"].strip()}
+
+    def _check_freshness(self, message_ts):
+        skew = self.settings.request_max_skew_seconds
+        if not skew:
+            return
+        try:
+            ts = datetime.fromisoformat(str(message_ts).replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            raise QueryError(400, "invalid_envelope", "header.message_ts must be an ISO-8601 timestamp") from None
+        if abs((datetime.now(timezone.utc) - ts).total_seconds()) > skew:
+            raise QueryError(400, "stale_request", f"header.message_ts is more than {skew}s from now")
+
+    def _validate_parameters(self, compiled: CompiledUseCase, given) -> Dict[str, Any]:
+        given = given if given is not None else {}
+        if not isinstance(given, dict):
+            raise QueryError(400, "invalid_input", "message.parameters must be an object")
+        specs = compiled.spec.input.parameters
+        unknown = sorted(set(given) - set(specs))
+        if unknown:
+            raise QueryError(400, "invalid_input", f"unknown parameters {unknown}; allowed {sorted(specs)}")
+        out = {}
+        for name, spec in specs.items():
+            value = given.get(name)
+            if value is None:
+                if spec.required and spec.default is None:
+                    raise QueryError(400, "invalid_input", f"parameter '{name}' is required")
+                out[name] = spec.default
+                continue
+            try:
+                out[name] = coerce_parameter(name, spec, value)
+            except ParameterError as e:
+                raise QueryError(400, "invalid_input", str(e)) from None
+        return out
+
+    def _rate_limit(self, compiled: CompiledUseCase, partner_id: str):
+        rate = compiled.spec.limits.rate()
+        if rate and not self.limiter.allow(partner_id, compiled.ref, *rate):
+            raise QueryError(429, "rate_limited", f"more than {compiled.spec.limits.rate_per_partner} for {compiled.ref}")
+
+    async def _check_consent(self, compiled: CompiledUseCase, message, subject, partner_id) -> Dict[str, bool]:
+        consent_jws = message.get("consent_jws")
+        if consent_jws is not None and not isinstance(consent_jws, str):
+            raise QueryError(400, "invalid_input", "message.consent_jws must be a string")
+        if not compiled.spec.consent.required:
+            return {s.id: True for s in compiled.spec.sources}
+        if not consent_jws:
+            raise QueryError(403, "consent_required", f"{compiled.ref} needs the subject's consent (message.consent_jws)")
+        try:
+            claims = decode_claims(consent_jws)
+        except ConsentError as e:
+            raise QueryError(403, e.code, e.message) from None
+        if not await self.crypto.verify_compact(consent_jws, partner_id):
+            raise QueryError(403, "consent_signature_invalid", "the consent signature does not verify against the partner's key")
+        try:
+            return check_consent(claims, subject, compiled.spec.sources)
+        except ConsentError as e:
+            raise QueryError(403, e.code, e.message) from None
+
+    # ── running the sources ──────────────────────────────────────────────────
+
+    async def run_sources(
+        self,
+        compiled: CompiledUseCase,
+        subject: Dict[str, str],
+        parameters: Dict[str, Any],
+        consent_jws: Optional[str],
+        partner_id: str,
+        request_id: str,
+        granted: Optional[Dict[str, bool]] = None,
+    ) -> Dict[str, SourceResult]:
+        spec = compiled.spec
+        results: Dict[str, SourceResult] = {}
+        for src in spec.sources:
+            if granted is not None and not granted.get(src.id, True):
+                results[src.id] = SourceResult(dci.DENIED, detail=f"the consent has no grant for {src.controller}")
+
+        async def run_levels():
+            for level in compiled.levels:
+                todo = []
+                for sid in level:
+                    if sid in results:
+                        continue
+                    src = compiled.sources[sid]
+                    blocked = next((d for d in src.depends_on if results[d].status != dci.OK), None)
+                    if blocked:
+                        results[sid] = SourceResult(
+                            results[blocked].status, detail=f"not called: dependency '{blocked}' is {results[blocked].status}"
+                        )
+                        continue
+                    todo.append(sid)
+                if todo:
+                    await asyncio.gather(*(
+                        self._call_source(compiled, sid, subject, parameters, consent_jws, partner_id, request_id, results)
+                        for sid in todo
+                    ))
+
+        overall = (spec.execution.overall_timeout_ms or self.settings.default_overall_timeout_ms) / 1000.0
+        try:
+            await asyncio.wait_for(run_levels(), timeout=overall)
+        except asyncio.TimeoutError:
+            pass
+        for src in spec.sources:
+            if src.id not in results:
+                results[src.id] = SourceResult(dci.UNAVAILABLE, detail="overall timeout reached")
+        return {s.id: results[s.id] for s in spec.sources}
+
+    async def _call_source(self, compiled, sid, subject, parameters, consent_jws, partner_id, request_id, results):
+        src = compiled.sources[sid]
+        started = time.monotonic()
+        result = SourceResult(dci.ERROR)
+        try:
+            result = await self._call_source_inner(compiled, src, subject, parameters, consent_jws, partner_id, request_id, results)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # never let one source break the request
+            _logger.exception("request_id=%s source=%s failed unexpectedly", request_id, sid)
+            result = SourceResult(dci.ERROR, detail=f"internal error ({type(e).__name__})", called=True)
+        result.duration_ms = int((time.monotonic() - started) * 1000)
+        results[sid] = result
+        if result.called:
+            outcome = "success" if result.status in (dci.OK, dci.NO_RECORD) else ("denied" if result.status == dci.DENIED else "failure")
+            self._emit(
+                compiled, "source_call", request_id, partner_id, outcome, None if outcome == "success" else result.status,
+                {"source": sid, "controller": src.controller, "status": result.status,
+                 "attempts": result.attempts, "duration_ms": result.duration_ms},
+            )
+
+    async def _call_source_inner(self, compiled, src, subject, parameters, consent_jws, partner_id, request_id, results) -> SourceResult:
+        endpoint = self.settings.registries.get(src.controller)
+        if not endpoint or not endpoint.get("url"):
+            return SourceResult(dci.ERROR, detail=f"no endpoint configured for {src.controller}")
+        context = {
+            "subject": subject,
+            "parameters": parameters,
+            "sources": {d: {"status": results[d].status, "records": results[d].records} for d in src.depends_on},
+            "request_id": request_id,
+            "today": date.today().isoformat(),
+            "use_case": compiled.ref,
+        }
+        try:
+            rendered = render_query(compiled.templates[src.id], context)
+        except TemplateRenderError as e:
+            return SourceResult(dci.ERROR, detail=f"query template: {e}")
+        envelope = dci.build_search(
+            request_id=request_id,
+            source_id=src.id,
+            sender_id=self.settings.composite_partner_id,
+            receiver_id=endpoint.get("receiver_id") or src.controller,
+            on_behalf_of=partner_id,
+            use_case=compiled.ref,
+            reg_type=src.dci.reg_type,
+            reg_record_type=src.dci.reg_record_type,
+            rendered=rendered,
+            consent_jws=consent_jws,
+        )
+        try:
+            envelope = {"signature": await self.crypto.sign_detached(envelope), **envelope}
+        except Exception as e:
+            _logger.error("request_id=%s: cannot sign the request to %s: %s", request_id, src.controller, e)
+            return SourceResult(dci.ERROR, detail="the composite could not sign the registry request")
+
+        timeout = (src.timeout_ms or self.settings.default_source_timeout_ms) / 1000.0
+        attempts, response, last_error = 0, None, None
+        while attempts <= src.retries:
+            attempts += 1
+            try:
+                response = await self._client().post(endpoint["url"], json=envelope, timeout=timeout)
+            except httpx.TransportError as e:  # connect/read errors and timeouts
+                response, last_error = None, e
+            else:
+                if response.status_code < 500:
+                    break
+            if attempts <= src.retries:
+                await asyncio.sleep(min(0.1 * attempts, 0.5))
+
+        if response is None:
+            kind = "timed out" if isinstance(last_error, httpx.TimeoutException) else "unreachable"
+            return SourceResult(dci.UNAVAILABLE, detail=f"registry {kind}", attempts=attempts, called=True)
+        http_status = dci.classify_http(response.status_code)
+        if http_status:
+            return SourceResult(http_status[0], detail=http_status[1], attempts=attempts, called=True)
+        try:
+            body = response.json()
+        except ValueError:
+            return SourceResult(dci.ERROR, detail="registry response is not JSON", attempts=attempts, called=True)
+
+        registry_partner = endpoint.get("partner_id")
+        if registry_partner:
+            sig = body.get("signature") if isinstance(body, dict) else None
+            ok = isinstance(sig, str) and await self.crypto.verify_detached(
+                sig, {"header": body.get("header"), "message": body.get("message")}, registry_partner
+            )
+            if not ok:
+                return SourceResult(dci.ERROR, detail="registry response signature does not verify", attempts=attempts, called=True)
+
+        status, records, detail = dci.classify_body(body)
+        return SourceResult(status, records=records, detail=detail, attempts=attempts, called=True)
+
+    # ── assembly ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _apply_partial_rule(compiled: CompiledUseCase, statuses: Dict[str, SourceResult]):
+        strict = compiled.spec.execution.partial_response == "denied"
+        failed = [
+            (sid, r) for sid, r in statuses.items()
+            if r.status in dci.FAILED and (strict or compiled.sources[sid].requirement == "mandatory")
+        ]
+        if not failed:
+            return
+        kinds = {r.status for _sid, r in failed}
+        if dci.DENIED in kinds:
+            http, code = 403, "source_denied"
+        elif dci.UNAVAILABLE in kinds:
+            timeouts = any("timeout" in (r.detail or "") or "timed out" in (r.detail or "") for _s, r in failed)
+            http, code = (504 if timeouts else 503), "source_unavailable"
+        else:
+            http, code = 502, "source_error"
+        names = ", ".join(f"{sid} ({r.status})" for sid, r in failed)
+        rule = "partial responses are not allowed" if strict else "mandatory source failed"
+        raise QueryError(http, code, f"{rule}: {names}", sources={sid: r.public() for sid, r in statuses.items()})
+
+    @staticmethod
+    def assemble(compiled: CompiledUseCase, subject, parameters, statuses: Dict[str, SourceResult]) -> Dict[str, Any]:
+        ctx = {
+            "subject": subject,
+            "parameters": parameters,
+            "sources": {sid: {"status": r.status, "records": r.records} for sid, r in statuses.items()},
+        }
+        data: Dict[str, Any] = {}
+        for out, path in compiled.mapping:
+            try:
+                set_path(data, out, path.value(ctx))
+            except Exception:
+                _logger.warning("use_case=%s: mapping '%s' failed", compiled.ref, out)
+                set_path(data, out, None)
+        ctx["data"] = data
+        for out, node in compiled.derived:
+            try:
+                set_path(data, out, evaluate(node, ctx))
+            except Exception:
+                _logger.warning("use_case=%s: derived '%s' failed", compiled.ref, out)
+                set_path(data, out, None)
+        return data
+
+    # ── envelope ─────────────────────────────────────────────────────────────
+
+    def _response_header(self, partner_id, in_reply_to, status, reason=None) -> Dict[str, Any]:
+        header = {
+            "version": "1.0.0",
+            "message_id": str(uuid.uuid4()),
+            "message_ts": dci.now_ts(),
+            "action": "on-query",
+            "status": status,
+            "sender_id": self.settings.composite_partner_id,
+            "receiver_id": partner_id or "",
+            "meta": {"in_reply_to": in_reply_to} if in_reply_to else {},
+        }
+        if reason:
+            header["status_reason_code"], header["status_reason_message"] = reason
+        return header
+
+    async def _envelope(self, partner_id, in_reply_to, message, status, reason=None) -> Optional[Dict[str, Any]]:
+        header = self._response_header(partner_id, in_reply_to, status, reason)
+        try:
+            signature = await self.crypto.sign_detached({"header": header, "message": message})
+        except Exception as e:
+            _logger.error("Cannot sign the response: %s", e)
+            return None
+        return {"signature": signature, "header": header, "message": message}
+
+    def _emit(self, compiled, kind, request_id, partner_id, outcome, reason=None, context=None):
+        if kind in compiled.spec.audit.events:
+            self.audit.emit(kind, request_id=request_id, partner_id=partner_id, use_case=compiled.ref,
+                            outcome=outcome, reason=reason, context=context)

@@ -195,7 +195,9 @@ A partner's policy therefore covers all three record types the same way.
 - **Filtered** (`expression`): `subject_id` (the farmer ID) plus filters.
   - Activities can be filtered by any plain field: `activity_type`, `occurred_at`, `verification_status`, `crop`, `plot_id`…
   - Crop seasons can be filtered by any plain projection column, e.g. `crop_year`, `season`, `crop`, `stage`.
-  - Summaries can be filtered by `aggregate_type`, `period_key`, `crop_year` and `season`.
+  - Summaries can be filtered by `aggregate_type`, `period_key`, `crop_year`, `season` and `is_final`.
+- **Final summaries:** a farmer's season summary becomes final when a period lock (all activity types) covers the season's window and its activities are processed (`crop_season.is_final`). Plans are often made before the window, so lock from the planning start, or a late change to a plan makes the summary provisional again.
+- **Across farmers:** a programme system the registry operator allow-lists can search summaries without a farmer ID, e.g. every final Belg 2018 summary for a subsidy run. See [activity register](activity-register.md#interfaces).
   - The operators are those of entity searches (`$eq`, `$in`, `$gte`…).
 
 Results come newest first, so "the farmer's last 10 activities" needs no filter: `page_size: 10`. For example, "wheat sown by FR-0007 in Meher 2019" is the summary for `crop_year: 2019`, `season: SEASON_MEHER`, read at `measures.by_crop.CROP_WHEAT.area_sown_ha`. See the [composite worked example](composite.md#worked-example-wheat-sown-by-a-farmer-this-season).

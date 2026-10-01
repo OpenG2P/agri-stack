@@ -120,7 +120,7 @@ The activity model is **its own base class**, `G2PActivity`, next to `G2PRegiste
 | `g2p_activity_odk_forms`, `g2p_activity_odk_failures` | ODK Central form mappings and the submissions that failed |
 | `g2p_activity_type_schemas` | Every payload schema an activity type has had, by `schema_version`. A trigger increments the version when the schema changes, whether the change comes from a seed, an API or by hand. |
 | `g2p_activity_enrichments` | Derived or external data for one activity, written asynchronously; kept beside the activity, never inside it |
-| `g2p_activity_aggregates`, `g2p_activity_aggregate_history` | Roll-ups per subject, aggregate type and period (`period_key` with start and end dates, geography and custom dimensions), and every value each has had |
+| `g2p_activity_aggregates`, `g2p_activity_aggregate_history` | Roll-ups per subject, aggregate type and period (`period_key` with start and end dates, geography and custom dimensions), and every value each has had. An aggregate is **final** or provisional (see [Final figures](#final-figures)) |
 
 - **Append-only is enforced in the database.** A trigger rejects `DELETE`, and rejects any `UPDATE` that touches columns other than status and verification.
 - **Extensions need no migration code.** The platform migration finds an extension's `G2PActivity…` and `G2PActivityProjection…` models and creates them: partitions, indexes and trigger.
@@ -154,6 +154,18 @@ The activity model is **its own base class**, `G2PActivity`, next to `G2PRegiste
 - **Verify or reject:** changes only the verification columns.
 - All of these need a reason and are blocked inside closed periods.
 
+### Final figures
+
+A payment or official statistic needs a figure that won't change. An aggregate becomes **final** (`is_final`, with when and by whose lock) when:
+- its type is one the register lists (`final_on_period_lock` in the domain service, e.g. a worker's monthly attendance, a farmer's season summary);
+- an active period lock for all activity types covers its whole period;
+- every activity event in that period has been processed;
+- its value was last changed by an event raised before the lock.
+
+It is finalised when the period is locked, or after the outbox worker catches up. Reopening the lock makes it provisional again.
+
+**A late change** (an activity outside the locked window that still feeds the aggregate, e.g. a plan made before the season) makes a final aggregate provisional. It stays provisional until the period is reopened and locked again, so a figure is never final and wrong, and a change after payment is visible. A register whose aggregates draw on activities outside their period should lock the wider window.
+
 ### Interfaces
 
 | Where | What |
@@ -164,7 +176,7 @@ The activity model is **its own base class**, `G2PActivity`, next to `G2PRegiste
 | Partner API `/dci/registry/sync/search` | `reg_type` can be an activity register. Returns current activities only, rendered by the register's DCI template, with the consent clamp applied as for records. The `reg_record_type` picks what comes back, by subject ID:<br>• **activities** (default);<br>• **current state per context**, when the record type names a context type (e.g. `spdci-extensions-agri:CropSeason` → `CROP_SEASON`): each crop season's stage, areas, yield and verification, from the projection. This is what a subsidy or loan decision reads;<br>• **aggregates**, when it ends in `Aggregate` (e.g. a farmer's season summaries).<br>The register shapes the state and aggregate records (domain hooks `dci_state_record`, `dci_aggregate_record`) onto its own consent scopes, so the consent clamp applies as for activities.<br>Every search of an activity register can name its subject exactly: an `expression` with `subject_id` plus filters, on fields the view itself has:
 • activities: any plain column (type, dates, verification, promoted payload fields);
 • state: projection columns;
-• aggregates: `aggregate_type`, period and custom dimensions (e.g. `crop_year`, `season`).<br>Results come newest first, so "the farmer's last 10 activities" is a subject search with `page_size: 10`. All DCI search is synchronous. |
+• aggregates: `aggregate_type`, period, `is_final` and custom dimensions (e.g. `crop_year`, `season`).<br>**Aggregates across subjects** (no `subject_id`; e.g. every worker's final monthly attendance for a benefit run) are allowed only for partners the registry operator lists in `dci_bulk_aggregate_partners`, with the data scopes each may receive. There is no per-person consent for such a search, so those scopes replace the Consent Manager's; the signature is still verified. The search must name the `aggregate_type`, and pages are capped (`dci_bulk_aggregate_max_page_size`, 500).<br>Results come newest first, so "the farmer's last 10 activities" is a subject search with `page_size: 10`. All DCI search is synchronous. |
 | Celery | `activity_outbox_worker` (outgest; enrichment and aggregates through the register's `enrich` and `aggregate` hooks), `activity_reconcile_worker` (repairs projection drift), `activity_partition_worker` (next year's partitions), `activity_odk_pull_worker` (ODK Central), `activity_sample_data_worker` (demo installs only: records each register's sample activities once, from its domain service's `sample_activities` hook, through the normal write path) |
 | Staff UI | Activity registers are listed with the other registers: the home page's Registers card counts them (with their number of contexts, e.g. crop seasons) and its register dropdown offers them as "(Activity)", opening `/activity/<register>`. Per register: activities (filters, detail panel with verify/reject/correct/void, and participants), current state, work list, indicators, record (single or batch, form generated from the JSON Schema, Ethiopian-calendar date picker), settings. Per context: current state, timeline, record the next activity, and the context it replaced or was replaced by. |
 

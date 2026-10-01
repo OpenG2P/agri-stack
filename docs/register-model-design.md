@@ -167,9 +167,10 @@ One role is the **primary subject**, used for contexts and summaries. Participan
 
 | Register | Kind | Trust policy | Corrections |
 |---|---|---|---|
-| Farmer | Entity | Approval of changes (AWE), as today. **Verification** of the Fayda FAN by a system check (Fayda lookup: trusted source) | Change request → new version |
+| Farmer (incl. declared main crops) | Entity | Approval of changes (AWE), as today. **Verification** of the Fayda FAN by a system check (Fayda lookup: trusted source) | Change request → new version |
 | Land (child of Farmer) | Entity | Verification of size and tenure (survey, document). **Attestation**: land certificate | Change request; the land certificate is revoked and reissued on change |
 | Household, members | Entity | As Farmer | Change request |
+| Livestock (child of Farmer) | Entity | As Farmer | Change request. Kept until a Livestock registry exists |
 | *(later)* Farm visits, trainings | Occurrence | Verification optional | Supersede / void |
 
 Nothing changes for the Farmer Registry unless it adopts field verification or certificates. Its existing verification table and AWE approvals become the default trust policy.
@@ -305,6 +306,9 @@ CSR's samples are past and current Meher and Belg seasons for the adult sample p
 | Temporary IDs | **Withdrawn.** Offline capture registers the entity first |
 | Sample data across registries | **Shared by convention, not by reading another registry's database.** IDs derive from Master Data's sample people |
 | Cluster changes | **Approved in AWE,** like other entity registers |
+| Crops in the Farmer Registry? | **Declared "main crops" only**: the crops the farmer mainly grows, from the CROP_COMMODITY list, recorded at registration. FR's Crops tab (crop records per land) is removed; what was planned, sown and harvested each season is held only in the Crop Sown Registry |
+| Livestock in the Farmer Registry? | **Kept as it is** (FR's Livestock tab) until a Livestock registry exists; then reduced to a declared summary or removed |
+| Land: in the Farmer Registry or its own registry? | **In the Farmer Registry for now**, as a child of the farmer; the Crop Sown Registry's plot IDs refer to it. If a land administration (cadastre) registry is set up, the parcel moves there and the Farmer Registry keeps only a reference to it (and how the farmer uses it) |
 
 ## Related
 

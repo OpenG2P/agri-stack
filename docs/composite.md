@@ -151,7 +151,7 @@ The question is "total area of wheat sown by farmer X in this season". Both regi
 }
 ```
 
-The farmer record carries both identifiers, `UIN` (the FAN) and `FARMER_ID` (e.g. `FR-0007`). It comes with the farmer's linked records (land, household, crops, livestock) whether the search is by exact field or by ID.
+The farmer record carries both identifiers, `UIN` (the FAN) and `FARMER_ID` (e.g. `FR-0007`). It comes with the farmer's linked records (land, household, livestock) and declared main crops, whether the search is by exact field or by ID.
 
 Any question about one farmer follows the same pattern: the farmer's record from the Farmer Registry, and from the Crop Sown Registry the farmer's activities, crop seasons or season summaries, each filtered on its own fields. Nothing in the registries is specific to a particular question.
 

@@ -13,14 +13,23 @@
 - **Generic, code-free activity storage.** The Observations design keeps every type in one platform table, and adds types through an API with no code. That would let "Activity" appear under Add Register. Deferred: crop sown needs an extension either way. Revisit for simple registers such as attendance.
 - **Geography of a plot in two places.** The Crop Sown Registry records the plot's woreda on the crop season; the Farmer Registry has its own location for the Land record. If they disagree, the crop season's woreda is what CSR's figures use. Decide whether CSR should check it against the Farmer Registry when it looks plots up.
 - **Dashboards on the reporting views.** The Crop Sown Registry now has reporting views by region, zone and woreda; the Superset/Insights dashboards on them are not built. Views bypass data policies, so dashboard access must be limited to roles allowed to see all locations.
-- **Register model design.** The [design note](register-model-design.md) proposes one trust layer and one correction model for entity and occurrence registers, typed participants, "entities first" and API changes. Decided: trust policy per section, no certificates for plans, typed participants, entities updated before occurrences are recorded. Still open: withdrawing temporary IDs, which conflict with entities first.
-- **Trust, certificates and participants for activities.** The [concept notes review](activity-registry-concept-review.md) found gaps, in priority order:
-  1. approval as a separate, per-type step, and automatic verification from trusted sources;
-  2. a trust and evidence log, and correction approval;
+- **Register model design, phase 2.** Phase 1 of the [design note](register-model-design.md#7-platform-changes-in-phases) is built:
+  - typed participants;
+  - entities first, with temporary plot IDs withdrawn;
+  - partner corrections;
+  - the Cluster register;
+  - the crop-change link;
+  - verification status in DCI;
+  - shared sample data.
+
+  Phase 2 remains, from the [concept notes review](activity-registry-concept-review.md):
+  1. the trust layer: field verification, approval as a separate per-type step, automatic verification from trusted sources, and a trust and evidence log;
+  2. a common correction model with approval and disputes;
   3. certificates from verified activities;
-  4. cluster as an entity, and the crop-change link;
-  5. participants with roles, and activity-triggered entity changes;
+  4. a beneficiary API for occurrences (it needs beneficiary authentication on the registry first);
+  5. DCI subscribe/notify for occurrence events;
   6. a season-window date check.
+- **Sample data at the registries' edges.** The CSR sample farmer and plot IDs match the Farmer Registry's only by convention (`FR-<n>`, `LAND-<n>-<k>` from Master Data's sample people). If either registry changes its sample ID rule, the other must follow.
 - **Aligning with the Observations design.** Built: the profile tab, `schema_version`, `submission_id`, the asynchronous enrichment and aggregate layer, geography as named levels with indicators and reporting views by level, season windows, and aggregates over DCI. Still to do: per-type switches for enrichment and aggregation with per-stage status, a beneficiary API, and agent-app capture (offline drafts, sync badge). The Crop Sown Registry uses the aggregate layer for a farmer's season summary and has no enrichment yet; weather or satellite data would be the first. See [activity register](activity-register.md#relation-to-the-observations-design).
 - **Activity register gaps.** Not yet designed:
   - bulk export API

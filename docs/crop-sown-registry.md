@@ -18,7 +18,10 @@ The Crop Sown Registry is **independent**. It shares data with the Farmer Regist
 
 - **Intercropping** is two contexts on the same plot.
 - **The subject** is the farmer (Farmer Registry ID). The Fayda FAN is carried alongside.
-- **The plot** is a Farmer Registry land record. The plot, farmer and DA are held by other registries, so they are checked for **format only** and never block an entry. A plot created offline (`TMP-…`) is recorded and resolved later. Under the proposed "entities first" rule ([register model design](register-model-design.md#4-participants-and-entities-first)), the farmer and plot are registered in the Farmer Registry before crop activities are recorded; temporary plot IDs are then under review.
+- **The plot** is a Farmer Registry land record. The plot, farmer and DA are held by other registries, so they are checked for **format only** and never block an entry.
+- **Entities first** ([register model design](register-model-design.md#4-participants-and-entities-first)): the farmer and plot are registered in the Farmer Registry before crop activities are recorded. Temporary plot IDs (`TMP-…`) are no longer accepted; a plot found in the field is registered first.
+- **Participants:** every activity records its participants in typed roles: farmer (primary), plot and development agent (Farmer Registry and other systems), and cluster (the Cluster register here). Activities can be searched by participant.
+- **A changed crop** is a new crop season that names the one it replaces (`replaces_crop_season_id`). The old season is closed, and each points to the other.
 - **The location** is the plot's **woreda**, chosen from Master Data's geography. It is required when a crop season is planned or sown; later activities take it from their crop season. Every activity stores it with its zone, region and country as named levels, so every figure can be rolled up by level. The registry can't read the plot's location from the Farmer Registry, which may be on another instance, so the woreda is entered.
 
 ## Activity types
@@ -28,7 +31,7 @@ The Crop Sown Registry is **independent**. It shares data with the Farmer Regist
 | `PLANNED` | Variety, planned area, cropping system, planned sowing date (Ethiopian calendar), planned seed and fertilisers, expected yield | Once per crop season |
 | `LAND_PREPARED` | Method (oxen / tractor / manual / zero tillage), area, irrigation source and method, soil fertility | Once; expected after `PLANNED` (warning) |
 | `SOWN` | Area sown, variety, seed type and source, seed kg, sowing method, fertilisers (type + kg), compost/manure, machinery, geo-tagged photo | Once; expected after `PLANNED` (warning); due 0–60 days after planning; **verified by a supervisor** |
-| `CLUSTER_ENROLLED` | Cluster ID and name, agro-ecological zone, cluster area, smallholders, water source | Once |
+| `CLUSTER_ENROLLED` | Cluster ID only; the cluster must exist in the Cluster register | Once |
 | `GROWTH_OBSERVED` | Growth stage, crop condition, area under crop, estimated yield | Repeatable; **requires `SOWN`** |
 | `INFESTATION_REPORTED` | Pest / disease / weed, agent (e.g. fall armyworm, wheat rust, striga), severity, area, % damage, action, pesticide | Repeatable; **requires `SOWN`** |
 | `DAMAGE_REPORTED` | Cause (drought, flood, hail, frost, wind, wildlife), area, % loss | Repeatable; **requires `SOWN`** |
@@ -74,6 +77,8 @@ One row per crop season:
 - furthest **stage** reached (planned → land prepared → sown → growing → harvested)
 - planned area and date, expected yield
 - area sown, sowing date, seed type, whether sowing was verified
+- whether the harvest was verified
+- the crop season it replaced, or was replaced by
 - latest growth stage and condition
 - infestations (count, worst severity), damage reports (count, worst % loss)
 - area harvested, quantity, yield, harvest date
@@ -132,10 +137,34 @@ The summary's location is the geographic levels all of the farmer's plots share,
 
 The summary is recomputed from the crop-season projections after every change, including corrections and voids, and each value is kept in its history.
 
+## Cluster register
+
+Clusters are **entities** in their own register in this registry, not activity data:
+- **fields:** code (e.g. `CL-ET0406-001`), name, crop, woreda, agro-ecological zone, water source, area, smallholders, year established, coordinator;
+- **changes:** created through an intake form and changed through change requests, both approved in AWE, like the Farmer Registry's registers.
+
+A plot joins a cluster with a `CLUSTER_ENROLLED` activity. Cluster totals are derived from the plots' activities.
+
+## Sample data
+
+A demo install loads samples. Production sets `loadSampleData` and `REGISTRY_CELERY_WORKERS_ACTIVITY_LOAD_SAMPLE_DATA` off.
+
+- **Clusters:** db-seed loads two sample clusters.
+- **Crop seasons:** the platform's sample task records them once, through the normal write path, after the activity types and clusters are loaded.
+  - Farmers are the adults among Master Data's sample people, with the Farmer Registry's IDs: `ETH-IND-0007` → `FR-0007`.
+  - Plots are `LAND-0007-1` (every farmer) and `LAND-0007-2` (every third), in the person's woreda.
+  - The Farmer Registry numbers sample lands the same way, so a demo of both shows the same farmers and plots. Neither reads the other.
+- **What they cover:**
+  - Meher 2018 (complete, with an infestation for some);
+  - Belg 2018 (complete for some farmers, with a drought);
+  - Meher 2019 (growing, so harvests are due on the work list).
+
+  Most sowings and harvests are verified; every fifth farmer's are pending. One sowing is corrected, and the farmers in a sample cluster's woreda are enrolled in it.
+
 ## Channels
 
 - **Staff portal:** single entry or batch.
-- **Partner systems:** e.g. a cooperative, via the signed partner API.
+- **Partner systems:** e.g. a cooperative, via the signed partner API. A partner can correct (supersede or void) only what it submitted.
 - **ODK Central:** a `crop_sowing` form whose submissions are pulled every few minutes. The ODK instance ID is the idempotency key; photos are stored as documents; failed submissions are kept for review.
 
 ## DCI
@@ -144,8 +173,8 @@ A DCI search with `reg_type = CropSown`, by farmer ID, returns one of three reco
 
 | `reg_record_type` | Returns | Used for |
 |---|---|---|
-| `spdci-extensions-agri:CropActivity` | The farmer's current activities (plans, sowings, observations, harvests) | Evidence, audit |
-| `spdci-extensions-agri:CropSeason` | Each crop season's current state: stage, planned and sown area, seed type, whether sowing was verified, growth and infestation status, harvest, yield, location | **Decisions** such as a fertiliser subsidy or a loan |
+| `spdci-extensions-agri:CropActivity` | The farmer's current activities (plans, sowings, observations, harvests), each with its verification status | Evidence, audit |
+| `spdci-extensions-agri:CropSeason` | Each crop season's current state: stage, planned and sown area, seed type, whether sowing and harvest were verified, activities awaiting verification, growth and infestation status, harvest, yield, location, and the season it replaced or was replaced by | **Decisions** such as a fertiliser subsidy or a loan |
 | `spdci-extensions-agri:ActivityAggregate` | The farmer's season summaries across plots and crops | Decisions on the farmer as a whole |
 
 All three share one set of consent scopes, the record's top-level keys:

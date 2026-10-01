@@ -110,7 +110,8 @@ The activity model is **its own base class**, `G2PActivity`, next to `G2PRegiste
 | `g2p_activity_<name>` (per register) | The activities. Standard fields plus a JSONB `payload`, and payload fields promoted to typed columns for filtering, indexes, data policies and indicators. Each activity also carries its location as named levels (`geo_dimensions`; see [Geography and roll-ups](#geography-and-roll-ups)). **Partitioned by year** of `occurred_at`, plus a default partition. |
 | `g2p_activity_projection_<name>` (per register) | The current state, one row per context, with the context's location (`geo_dimensions`) |
 | `g2p_activity_types` | Per type: JSON Schema, form layout, rules (repeatable, uniqueness, prior types with warn/block, due window, backdating limit, verification), reference rules, Ethiopian-calendar fields |
-| `g2p_activity_contexts` | Grouping key (e.g. plot × year × season × crop) with subject, attributes and open/closed status |
+| `g2p_activity_contexts` | Grouping key (e.g. plot × year × season × crop) with subject, attributes and open/closed status. A context can replace another (`replaces_context_id` / `replaced_by_context_id`, e.g. the crop was changed); the replaced one is closed |
+| `g2p_activity_participants` | Who or what took part in each activity, in a named role: farmer (primary), plot, development agent, cluster. Each is **typed**: `LOCAL` (a register in this registry, resolved to the record) or `EXTERNAL` (another system's ID). The type's `participant_roles` maps each role to a payload field |
 | `g2p_activity_period_locks` | Closed periods, with who reopened them and why |
 | `g2p_activity_idempotency_keys` | One activity per key, across all partitions |
 | `g2p_activity_outbox` | Events written in the same transaction as the activity |
@@ -141,11 +142,11 @@ The activity model is **its own base class**, `G2PActivity`, next to `G2PRegiste
    - Master Data geography.
    - Records in the same registry.
    - External IDs: pattern only, or a lookup through the domain service; strict, lenient or none.
-   - Temporary IDs: recorded now and resolved later.
+   - Temporary IDs: recorded now and resolved later. Supported, but not used by the Crop Sown Registry (entities first).
 4. **Find or open the context** and lock it, so concurrent writes to one context are serialised.
 5. **Check rules:** dates, closed periods, repeatability, uniqueness, sequence. Warnings are stored on the activity; blocking rules reject it.
 6. **Locate it:** record where the activity happened as named Master Data levels ([Geography and roll-ups](#geography-and-roll-ups)).
-7. **Save.** Insert the activity and its idempotency key, recompute the context's projection in the same transaction, and write an outbox event.
+7. **Save.** Insert the activity, its participants and its idempotency key, recompute the context's projection in the same transaction, and write an outbox event.
 
 **Corrections:**
 - **Supersede:** a new activity replaces the old one; the old one is kept as `SUPERSEDED`.
@@ -157,11 +158,12 @@ The activity model is **its own base class**, `G2PActivity`, next to `G2PRegiste
 
 | Where | What |
 |---|---|
-| Staff API `/activity/*` | Registers and types (types include code-list options for forms); append (single and batch, atomic or per item); supersede, void, verify, reject; get, search, timeline; contexts (open, close, reopen); work list; projections; indicators; period locks; temporary references; rebuild projections; **a record's activities and summaries across registers** (`get_subject_activities`, for the profile tab); **the latest activity of a type** (`get_latest_activity`, for form defaults); **aggregates and their history**; **a type's schema versions** |
-| Partner API `/partner/activity/append_activities` | DCI-style signed envelope (PM keys); per-item outcomes |
+| Staff API `/activity/*` | Registers and types (types include code-list options for forms); append (single and batch, atomic or per item, with participants); supersede, void, verify, reject; get, search (also by participant and role), timeline; contexts (open, close, reopen); work list; projections; indicators; period locks; temporary references; rebuild projections; **a record's activities and summaries across registers** (`get_subject_activities`, for the profile tab); **the latest activity of a type** (`get_latest_activity`, for form defaults); **aggregates and their history**; **a type's schema versions** |
+| Partner API `/partner/activity/append_activities` | DCI-style signed envelope (PM keys); per-item outcomes. Activities can name participants (`participants[]`: role + ID) |
+| Partner API `/partner/activity/correct_activities` | Same envelope: supersede (with the corrected fields) or void, with a reason. A partner can only correct activities it submitted |
 | Partner API `/dci/registry/sync/search` | `reg_type` can be an activity register. Returns current activities only, rendered by the register's DCI template, with the consent clamp applied as for records. The `reg_record_type` picks what comes back, by subject ID:<br>• **activities** (default);<br>• **current state per context**, when the record type names a context type (e.g. `spdci-extensions-agri:CropSeason` → `CROP_SEASON`): each crop season's stage, areas, yield and verification, from the projection. This is what a subsidy or loan decision reads;<br>• **aggregates**, when it ends in `Aggregate` (e.g. a farmer's season summaries).<br>The register shapes the state and aggregate records (domain hooks `dci_state_record`, `dci_aggregate_record`) onto its own consent scopes, so the consent clamp applies as for activities. |
-| Celery | `activity_outbox_worker` (outgest; enrichment and aggregates through the register's `enrich` and `aggregate` hooks), `activity_reconcile_worker` (repairs projection drift), `activity_partition_worker` (next year's partitions), `activity_odk_pull_worker` (ODK Central) |
-| Staff UI | Activity registers are listed with the other registers: the home page's Registers card counts them (with their number of contexts, e.g. crop seasons) and its register dropdown offers them as "(Activity)", opening `/activity/<register>`. Per register: activities (filters, detail panel with verify/reject/correct/void), current state, work list, indicators, record (single or batch, form generated from the JSON Schema, Ethiopian-calendar date picker), settings. Per context: current state, timeline, record the next activity. |
+| Celery | `activity_outbox_worker` (outgest; enrichment and aggregates through the register's `enrich` and `aggregate` hooks), `activity_reconcile_worker` (repairs projection drift), `activity_partition_worker` (next year's partitions), `activity_odk_pull_worker` (ODK Central), `activity_sample_data_worker` (demo installs only: records each register's sample activities once, from its domain service's `sample_activities` hook, through the normal write path) |
+| Staff UI | Activity registers are listed with the other registers: the home page's Registers card counts them (with their number of contexts, e.g. crop seasons) and its register dropdown offers them as "(Activity)", opening `/activity/<register>`. Per register: activities (filters, detail panel with verify/reject/correct/void, and participants), current state, work list, indicators, record (single or batch, form generated from the JSON Schema, Ethiopian-calendar date picker), settings. Per context: current state, timeline, record the next activity, and the context it replaced or was replaced by. |
 
 ### Geography and roll-ups
 
@@ -245,7 +247,7 @@ A crop season can be recorded in either of two places. The platform supports bot
 
 | Deployment | Example | Plot and farmer | Where staff record |
 |---|---|---|---|
-| **Its own registry** | The Crop Sown Registry, run by a separate department | References to the Farmer Registry, **checked for format only** (`EXTERNAL`, lenient); temporary plot IDs resolved later | The registry's activity pages |
+| **Its own registry** | The Crop Sown Registry, run by a separate department | References to the Farmer Registry, **checked for format only** (`EXTERNAL`, lenient); the farmer and plot are registered there first (entities first) | The registry's activity pages |
 | **Inside a record registry** | A crop-season activity register defined in the Farmer Registry's own extension | The Farmer Registry's own Land and farmer records (`LOCAL_RECORD`, strict); the subject is the Land record | The activity pages, **and** an Activities tab on the Land or farmer record |
 
 - **Registries stay independent.** Registries share data, never code. The Crop Sown Registry stands on its own, like the Disability Registry, and refers to the Farmer Registry only by ID. The Farmer Registry does not depend on it.

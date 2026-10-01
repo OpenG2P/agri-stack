@@ -2,7 +2,7 @@
 
 # Register model: record kinds, trust and corrections (design note)
 
-*Design note, 30 September 2026. A proposal: sections say what exists today and what is proposed.*
+*Design note, 30 September 2026; phase 1 built 1 October 2026. Sections say what exists today and what is proposed; [section 7](#7-platform-changes-in-phases) says what phase 1 built.*
 
 The registry platform grew two register kinds side by side: the conventional register and the activity register. Some of their differences are fundamental; others are just features one kind got first. This note sets out:
 - **one register model, with two record kinds**;
@@ -158,7 +158,7 @@ One role is the **primary subject**, used for contexts and summaries. Participan
 
 **Consequences:**
 - **Referenced entities must exist.** For a register in the same registry, a strict local-record rule enforces it. For another registry, a lookup enforces it where one is available. Where it isn't (the Crop Sown Registry checks Farmer Registry IDs for format only), the rule is an operating procedure: register the farmer and plot in the Farmer Registry first.
-- **Temporary IDs conflict with it.** Temporary IDs (`TMP-…` plots created offline and resolved later) let an occurrence arrive before its entity. Under this rule, offline capture must register the new plot first, in the same sync, before the occurrence. Temporary IDs should be withdrawn, or kept only for a capture tool that submits the entity first.
+- **Temporary IDs are withdrawn (decided).** Temporary IDs (`TMP-…` plots created offline and resolved later) let an occurrence arrive before its entity. Offline capture must now register the new plot first, before the occurrence. The Crop Sown Registry no longer accepts them; the platform keeps the feature, unused, for a capture tool that registers the entity first.
 - **The history and the current state can be traced in both directions.** The occurrence (e.g. the sale) is the history of what happened; the entity's current state (the owner) comes from its own change request. Each can point to the other, through the change request's reference and the occurrence's participants.
 
 ## 5. How the three registries fit
@@ -213,7 +213,7 @@ The occurrences are the history. Current animal status (e.g. last vaccinated, so
 | API | Entities | Occurrences |
 |---|---|---|
 | **Staff** | Register data, metadata, sections and tabs; change requests; `/verifications` (get / add, tied to change requests); intake forms; ingestion and outgestion config | `/activity/*`:<br>• append, supersede, void, verify, reject;<br>• search, timeline, contexts;<br>• work list, projections, indicators, aggregates;<br>• locks, temporary references;<br>• `get_subject_activities` (profile tab), `get_latest_activity`, schema versions. |
-| **Partner** | `/partner/ingest_data` (becomes change requests); `/dci/registry/sync/search` (records) | `/partner/activity/append_activities`; DCI search of activities, context state (`…:CropSeason`) and aggregates |
+| **Partner** | `/partner/ingest_data` (becomes change requests); `/dci/registry/sync/search` (records) | `/partner/activity/append_activities`, `correct_activities` (phase 1); DCI search of activities, context state (`…:CropSeason`) and aggregates |
 | **Beneficiary** | `/beneficiary_portal`: own registers and sections | — |
 | **Agent portal** | VC issuance and verification (register records) | — |
 
@@ -225,7 +225,7 @@ The occurrences are the history. Current animal status (e.g. last vaccinated, so
 |---|---|
 | **Trust (new, common)** | `/trust/*`:<br>• get the trust policy for a register, type or field;<br>• add a trust record (verify, approve, reject, attest, dispute) on any target (record, section, field, change request, occurrence), with evidence;<br>• list a target's trust records and trust status;<br>• list items awaiting a trust step (a work queue per step).<br>`/verifications/*` and `/activity/verify_activity`, `reject_activity` remain as shortcuts onto it. |
 | **Corrections (common)** | `/corrections/*`:<br>• submit a correction on any target, with a reason and the corrected data;<br>• list pending corrections;<br>• decide one.<br>Entity corrections become change requests (existing flow); occurrence corrections become supersedes, held for approval when policy requires. `supersede_activity` and `void_activity` remain. |
-| **Participants** | `append_activity` / `append_activities` accept `participants[]` (role and ID; the type comes from configuration). `search_activities` filters by participant and role. The profile tab covers every role, not only the subject. |
+| **Participants** *(built, phase 1)* | `append_activity` / `append_activities` accept `participants[]` (role and ID; the type comes from configuration). `search_activities` filters by participant and role. The profile tab covers every role, not only the subject. |
 | **Certificates** | Issue, revoke and list certificates for a record or occurrence, reusing the agent portal's VC issuance, which the staff API calls |
 | **Entity registers** | Locations as named levels on records; reference rules on entity sections; idempotency keys on entity ingestion |
 
@@ -233,9 +233,9 @@ The occurrences are the history. Current animal status (e.g. last vaccinated, so
 
 | Area | Change |
 |---|---|
-| **Corrections by partners (new)** | `/partner/activity/correct_activities`: supersede or void with a reason, same signed envelope. Today partners can only append. Entity corrections continue through `/partner/ingest_data` as change requests. |
+| **Corrections by partners** *(built, phase 1)* | `/partner/activity/correct_activities`: supersede or void with a reason, same signed envelope. Today partners can only append. Entity corrections continue through `/partner/ingest_data` as change requests. |
 | **Trusted-source submissions** | Partner Management marks a partner as a **trusted source** for given activity types. Its signed submissions record an automatic verification. A payload may carry a **signed attestation** (e.g. the vet's signature), stored as a trust record. |
-| **Participants** | `append_activities` accepts `participants[]` |
+| **Participants** *(built, phase 1)* | `append_activities` accepts `participants[]` |
 | **DCI: trust in responses** | Records, activities, crop-season state and aggregates carry their **trust status** under a `trust` key, clamped like any other scope. Searches can require a status, e.g. only **approved** sowings, the filter a subsidy scheme needs. |
 | **DCI: subscribe / notify** | Subscribe to occurrence events (appended, superseded, voided, verified, approved), published from the existing outbox, so a programme hears when a sowing is approved or corrected |
 | **Certificates** | No registry API needed: partners check certificates with the VC verifier (agent portal / Inji Verify) |
@@ -255,16 +255,43 @@ The occurrences are the history. Current animal status (e.g. last vaccinated, so
 - the default trust policy reproduces today's behaviour (AWE approvals on change requests; verification only where `requires_verification` is set);
 - Farmer Registry and NSR need no change until they adopt a new capability.
 
-## 7. Platform changes, in order
+## 7. Platform changes, in phases
 
-1. **Trust layer.** Trust policies, trust records and trust status for both kinds, absorbing today's verification table and activity verification columns. This includes automatic verification from trusted sources, and trust status in DCI.
-2. **Correction model.** A common correction request with approval by policy, and disputes. Plus partner corrections for occurrences.
+### Phase 1 (built)
+
+No trust-layer work: entity change requests keep their AWE approval, and activity verification stays as it was (`requires_verification` per type).
+
+| Change | Where | What was built |
+|---|---|---|
+| **Participants** | Platform | Each activity type declares its roles (`participant_roles`: role → payload field, primary flag). Every activity's participants are stored typed and indexed (`g2p_activity_participants`: role, `LOCAL` register record or `EXTERNAL` system, ID). `append` accepts `participants[]` (role + ID); search filters by participant and role; the profile tab finds a record in any role. The staff UI lists participants on an activity |
+| **Entities first** | Platform, CSR | A local entity is checked strictly (the cluster must exist in the Cluster register). Farmer and plot stay format-only (another registry). Temporary plot IDs withdrawn from the Crop Sown Registry |
+| **Partner corrections** | Partner API | `/partner/activity/correct_activities`: supersede or void with a reason, signed like `append_activities`; a partner can only correct its own submissions |
+| **Cluster as an entity** | CSR | A Cluster register (code, name, crop, woreda, zone, water source, area, smallholders…), created through an intake form and changed through change requests, both approved in AWE. `CLUSTER_ENROLLED` carries only the cluster ID |
+| **Crop-change link** | Platform, CSR | A context can name the context it replaces (`replaces_crop_season_id` in the payload). The old one is closed and both point to each other, in the projection, the reporting view, the DCI crop-season record and the staff UI |
+| **Verification in DCI** | CSR | Activities carry `verification_status`; the crop-season state carries `sowing_verified`, `harvest_verified` and `pending_verification_count` |
+| **Sample data** | Platform, CSR, FR | See below |
+
+**Sample data, shared by convention.** The Farmer and Crop Sown registries never read each other's database. Both derive sample IDs from Master Data's sample people (the country pack's `samples/individuals.json`):
+- sample person `ETH-IND-0007` is farmer `FR-0007`;
+- their plots are `LAND-0007-1`, `LAND-0007-2`… in their woreda.
+
+The Farmer Registry's loader numbers each sample person's lands this way. The Crop Sown Registry loads its samples in two parts:
+- **db-seed** loads two sample clusters;
+- **a platform Celery task** (`activity_sample_data_worker`, on when `activity_load_sample_data` is set) asks the domain service for sample steps (`sample_activities`) and records them once through the normal write path. Each step is idempotent, and may be verified or corrected.
+
+CSR's samples are past and current Meher and Belg seasons for the adult sample people, at every stage, including:
+- an infestation and a drought;
+- verified and pending sowings;
+- one correction;
+- cluster enrolments.
+
+### Phase 2 (proposed)
+
+1. **Trust layer.** Trust policies, trust records and trust status for both kinds, absorbing today's verification table and activity verification columns. This includes field verification, automatic verification from trusted sources, and trust status in DCI.
+2. **Correction model.** A common correction request with approval by policy, and disputes.
 3. **Certificates.** Attestation through VC issuance for occurrences as well as entities, with revoke and reissue on correction.
-4. **Participants.** Named, indexed roles on occurrences; the subject becomes the primary role.
-5. **Entities first.** Existence checks for referenced entities; withdraw temporary IDs, or limit them to capture tools that register the entity first.
-6. **Cluster as an entity in the Crop Sown Registry,** and the crop-change link.
-7. **Shared capabilities on entity registers:** named-level locations, reference rules, idempotent ingestion.
-8. **Beneficiary API for occurrences,** and DCI subscribe/notify for occurrence events.
+4. **Shared capabilities on entity registers:** named-level locations, reference rules, idempotent ingestion.
+5. **Beneficiary API for occurrences** (it needs beneficiary authentication on the registry first), and **DCI subscribe/notify** for occurrence events.
 
 ## 8. Decisions
 
@@ -275,8 +302,9 @@ The occurrences are the history. Current animal status (e.g. last vaccinated, so
 | Participant IDs: plain or typed? | **Always typed** (register or system + ID). The activity type supplies the type; submitters send role + ID |
 | Occurrences changing entities (birth creates an animal, sale changes the owner)? | **No: entities first.** The entity register is updated before any occurrence about the entity is recorded |
 | Trust status vocabulary | From standards where they exist: the platform's approval statuses, W3C VC status lists for certificates, FHIR equivalents for the occurrence lifecycle. One summary label: Recorded → Verified → Approved → Attested (section 2) |
-
-**Still open:** withdrawing temporary IDs (section 4) versus keeping them for capture tools that register the entity first.
+| Temporary IDs | **Withdrawn.** Offline capture registers the entity first |
+| Sample data across registries | **Shared by convention, not by reading another registry's database.** IDs derive from Master Data's sample people |
+| Cluster changes | **Approved in AWE,** like other entity registers |
 
 ## Related
 

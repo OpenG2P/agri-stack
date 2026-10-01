@@ -23,12 +23,13 @@
   - shared sample data.
 
   Phase 2 remains, from the [concept notes review](activity-registry-concept-review.md):
-  1. the trust layer: field verification, approval as a separate per-type step, automatic verification from trusted sources, and a trust and evidence log;
-  2. a common correction model with approval and disputes;
-  3. certificates from verified activities;
-  4. a beneficiary API for occurrences (it needs beneficiary authentication on the registry first);
-  5. DCI subscribe/notify for occurrence events;
-  6. a season-window date check.
+  1. a common verification model for both kinds: what to verify configurable per field, section, record or activity type; verification records with evidence; automatic verification from trusted sources; status in DCI;
+  2. corrections marked as such on entity change requests, disputes, and verification reset on change;
+  3. a beneficiary API for occurrences (it needs beneficiary authentication on the registry first);
+  4. DCI subscribe/notify for occurrence events;
+  5. a season-window date check.
+
+  Programme approval and certificates are not registry work: PBMS decides whether a programme acts on verified records.
 - **Who may search across subjects.** Activity-register aggregates can be searched without a subject (e.g. for a benefit run). Today the registry operator allow-lists those partners and their scopes in the partner API's configuration (`dci_bulk_aggregate_partners`), because there is no per-person consent for such a search. This belongs in a Partner Management policy (a programme's legal basis for bulk access, approved by the department), checked like any other policy.
 - **Sample data at the registries' edges.** The CSR sample farmer and plot IDs match the Farmer Registry's only by convention (`FR-<n>`, `LAND-<n>-<k>` from Master Data's sample people). If either registry changes its sample ID rule, the other must follow.
 - **Aligning with the Observations design.** Built: the profile tab, `schema_version`, `submission_id`, the asynchronous enrichment and aggregate layer, geography as named levels with indicators and reporting views by level, season windows, and aggregates over DCI. Still to do: per-type switches for enrichment and aggregation with per-stage status, a beneficiary API, and agent-app capture (offline drafts, sync badge). The Crop Sown Registry uses the aggregate layer for a farmer's season summary and has no enrichment yet; weather or satellite data would be the first. See [activity register](activity-register.md#relation-to-the-observations-design).

@@ -43,7 +43,7 @@ These differences are necessary; merging them would cost correctness or scale.
 
 An occurrence's **facts are never modified**: what happened, when, where, to whom, and its payload and location. Only two things around it change:
 - **Lifecycle status:** `CURRENT` → `SUPERSEDED` (replaced by a correcting occurrence) or `VOIDED` (withdrawn: it didn't happen). The record stays.
-- **Trust:** verification, approval and attestation, held as **trust records** attached to it (section 2). Today these are columns on the row.
+- **Verification:** held as **verification records** attached to it (section 2). Today it is columns on the row.
 
 So an error is fixed by a **new** occurrence that points to the old one. A change in reality is simply **another** occurrence. Both old records stay readable, and anything already paid or certified on the original can be reversed and reissued against the correction.
 
@@ -53,7 +53,7 @@ These should work the same for entities and occurrences, and some of them are bu
 
 | Capability | Entity today | Occurrence today | Proposed |
 |---|---|---|---|
-| **Trust** (approval, verification, attestation) | Change request approval (AWE); a verification table tied to change requests | Verification columns on the activity | **One trust layer** (section 2) |
+| **Verification** | A verification table tied to change requests (changes themselves are approved in AWE) | Verification columns on the activity | **One verification model** (section 2) |
 | **Corrections** | Change request → new version + history | Supersede / void, with a reason | **One correction model** (section 3) |
 | **Forms** | Sections and tabs of widgets | Generated from each type's JSON Schema | Either works for either kind. Allow JSON-Schema forms on entity sections, and section layouts on activity types (`section_ui_schema` exists) |
 | **Reference rules** (code list, geography, local record, external ID; strict / lenient) | Widget-bound code lists only | Built | Available to entity registers too |
@@ -62,75 +62,71 @@ These should work the same for entities and occurrences, and some of them are bu
 | **Participants with roles** | Parent links only | One subject + payload references | **Typed participants** (section 4) |
 | **Sharing** (DCI, consent, data policies) | Built | Built | Both kinds, plus trust status (section 6) |
 
-## 2. Trust layer
+## 2. Trust layer: verification
 
-### Three trust steps
+The registry's job is that its records are **authentic, and verified where that is needed**. Whether a programme will act on a record (approval for payment or eligibility) is decided in PBMS, not here.
 
-Three questions, often confused, each switched on **per register, per activity type and, where needed, per field**:
+### The terms
 
-| Step | Question | Who or what performs it | Typical use |
-|---|---|---|---|
-| **Verification** | Is there enough evidence that it's true, or happened as reported? | A person (supervisor, DA), a system check (a Fayda lookup), or a **trusted source** by itself (an authenticated vet system, a biometric device) | Sowing seen on a geo-tagged photo; a farmer's FAN matched in Fayda |
-| **Approval** | Will the programme stand behind it and act on it? | An authorised person, through a workflow (AWE) | A sowing that triggers a subsidy; a harvest used as an official figure; a change to a farmer's record |
-| **Attestation** | Does an authority vouch for it, in a form others can check? | An issuer, as a **verifiable credential** (a certificate) | Crop certificate from a verified sowing; vaccination certificate; land certificate from a land record |
+| Term | What it means | What happens to the data | Entity register | Activity register |
+|---|---|---|---|---|
+| **Validation** | Automatic checks at entry: format, required fields, code lists, plausibility | Bad input is rejected or warned on; nothing is stored about it | Built | Built |
+| **Change** | The world changed: the farmer moved, got a new phone, sold a plot | New version; the old value stays in history as true *at that time* | Change request | Doesn't apply: an occurrence never changes; a new event is a new activity |
+| **Correction** | The record was wrong: a typo, a mis-measured area | New version; the old value is marked as an error, never true | Change request marked as a correction, with a reason | Supersede, with a reason |
+| **Void** | The record shouldn't exist: a duplicate, an event that never happened | Kept, but no longer counts | Record status (e.g. deactivated) | Void, with a reason |
+| **Approval** (of a change) | A supervisor authorises a change or correction before it enters the register | Governs who may change data; says nothing about whether it is true | AWE on change requests, as built | Not needed: appends and corrections are governed by permissions and rules |
+| **Verification** | An independent check that recorded data matches reality or an authoritative source: a field visit, a document, a Fayda lookup, a trusted device | **Never changes the data.** Adds a trust status (verified, failed or pending), with who checked, how and with what evidence | Phase 2 | Built as a single step; moves onto the common model |
+| **Dispute** | The person concerned says a record is wrong | Triggers verification, then a correction if the claim holds | Phase 2 | Phase 2 |
 
-These apply to **both kinds**:
-- verifying a land parcel's size is verification on an entity field;
-- approving a change request is approval on an entity change;
-- a vaccination certificate is attestation on an occurrence.
+**How they relate:**
+- Verification is about **truth**; approval is about **authority to change**. Both can apply to the same data.
+- A change or correction **resets the verification** of what it touched: new data hasn't been checked.
+- A failed verification leads to a **correction** or a **void**; it never edits the data itself.
 
 ### The model (proposed)
 
-**Trust policy**, set in configuration per register, per activity type, and **per section** for entity registers (decided; sections match today's forms and verification table):
-- which steps are **required**, and **for what**:
-  - `record`: the record needs it to be accepted;
-  - `use:<purpose>`: needed only before a use such as `use:payment` or `use:certificate`;
-- **who may perform** each step: roles, and **trusted sources**, i.e. channels or partners whose authenticated submissions verify automatically;
-- **what evidence** is expected (a photo, a document, a device capture, a signature).
+**Verification policy**, set in configuration. What needs verifying depends on the registry, so the target is chosen per case:
+- a **field** (e.g. the Fayda FAN, checked against Fayda);
+- a **section** (e.g. land tenure, from a document);
+- the **whole record**;
+- an **activity type** (e.g. Sown and Harvested, as today).
 
-Approval is **off unless a policy turns it on**, at the point where the programme will act on the data. Certificates are issued only from occurrences that happened, never from plans: a plan is an intention (decided).
+For each target, the policy says:
+- whether verification is **required**;
+- which **methods** count: manual (a supervisor or DA), document, system check against an authoritative source, or a **trusted source** whose authenticated submissions count as verified (a vet's system, a biometric device);
+- **who** may verify (roles);
+- what **evidence** is expected (a photo, a document, a device capture).
 
-**Trust records** are attached to a target: an entity record, a section of it, a field, a change request, or an occurrence. Each one holds:
-- **step** (verification, approval, attestation) and **outcome** (confirmed / rejected / revoked);
-- **actor** (person, system or source) and **method** (manual, trusted-source, system check);
-- **evidence** references (documents, photos, device records);
+**Verification records** are attached to a target. Each one holds:
+- **outcome** (verified / failed) and **method**;
+- **actor** (person, system or source);
+- **evidence** references;
 - **remarks**, and **when**.
 
-There can be several per target: a verification, then a dispute, then a supervisor's confirmation.
+A target can have several: a verification, a dispute, a re-verification. The log is kept.
 
-**Trust status** is a record's current trust, *derived* from its trust records (e.g. verified, not approved). It's what the UI shows, and what APIs filter and share. The vocabulary follows existing standards where there is one:
+**Verification status** is derived from the records and is what the UI shows and the APIs filter and share: `NOT_REQUIRED`, `PENDING`, `VERIFIED`, `FAILED`, and `DISPUTED` while a dispute is open. A change or correction to a verified target sets it back to `PENDING`.
 
-| Step | Statuses | Source |
-|---|---|---|
-| **Verification** | `NOT_REQUIRED`, `PENDING`, `VERIFIED`, `REJECTED`; `DISPUTED` while a dispute is open | Today's activity verification statuses, plus a dispute state |
-| **Approval** | `NOT_REQUIRED`, `PENDING`, `APPROVED`, `REJECTED`, `CANCELLED` | The platform's existing approval statuses (change requests, AWE) |
-| **Attestation** (certificate) | `ACTIVE`, `SUSPENDED`, `REVOKED` | W3C Verifiable Credentials status lists (revocation, suspension) |
-| **Occurrence lifecycle** | `ACTIVE`, `SUPERSEDED`, `VOIDED` | As built. HL7 FHIR equivalents: `amended` / `corrected` (superseded), `entered-in-error` (voided) |
-
-**One summary label** is shown to users: the highest step reached, i.e. **Recorded → Verified → Approved → Attested**, with a flag for *rejected*, *disputed* or *revoked*.
-
-**Certificates:** an attestation creates a certificate ID and issues a verifiable credential. The credential names the subject, the facts attested and the record it points to. It is:
-- **revoked** when that record is superseded or voided (occurrence), or changed (entity);
-- **reissued** only after the correcting record meets the same trust policy.
+**One model for both kinds.** Activity verification (today's columns on the activity row) becomes verification records on the activity, with its status derived as for entities. Behaviour doesn't change; the platform has one verification mechanism, not two.
 
 **Mapping from today:**
-- `g2p_register_verifications` (entities) and the verification columns on activities (occurrences) both become **trust records**;
-- AWE approval of change requests becomes the **approval** step for entity changes;
-- the agent portal's VC issuance becomes the **attestation** step for both kinds.
+- `g2p_register_verifications` (entities) and the verification columns on activities both become **verification records**;
+- AWE approval of change requests stays as it is: it governs changes, not truth;
+- certificates (VC issuance in the agent portal) are unchanged and outside this model.
 
-Existing behaviour is the default policy, so Farmer Registry and NSR behave as before.
+Existing behaviour is the default policy, so the Farmer Registry and NSR behave as before.
 
 ## 3. One correction model
 
-A **correction** is a request to fix data, always with a **reason**. It is applied **directly** (with the right permission) or **after approval**, as the policy says. How it lands depends on the kind:
+A **correction** fixes data that was wrong, always with a **reason** (see [the terms](#the-terms)). How it lands depends on the kind:
 
 | Situation | Entity | Occurrence |
 |---|---|---|
 | **A value was wrong** | Change request → new version; history keeps the old one | Correcting occurrence **supersedes** the old one; the old one stays |
 | **It shouldn't exist** | Deactivate / archive | **Void** ("it didn't happen"); it stays |
-| **Needs approval?** | Change requests go through AWE, as today | Per activity type (**new**): the correction waits for approval before it supersedes |
-| **Disputed** (the subject says it's wrong) | A dispute recorded as a trust record; the outcome is a change request or a rejection | Same: a dispute trust record, resolved by a correction or by confirming the original |
-| **What happens downstream** | Certificates on changed fields are revoked and reissued | Certificates on the superseded occurrence are revoked and reissued from the correction |
+| **Who may** | Change requests go through AWE, as today | The `activity:correct` permission |
+| **Disputed** (the subject says it's wrong) | A dispute recorded against the target; resolved by verification, then a correction if the claim holds | Same |
+| **Verification** | The changed fields go back to pending | The correcting activity starts pending, if its type requires verification |
 
 **The resurvey example.** An agent resurveys a plot and finds a different value. That's either:
 - a **correction** (the first survey was wrong): supersede; or
@@ -165,37 +161,37 @@ One role is the **primary subject**, used for contexts and summaries. Participan
 
 ### Farmer Registry (entities; can hold occurrences later)
 
-| Register | Kind | Trust policy | Corrections |
+| Register | Kind | Verification | Corrections |
 |---|---|---|---|
 | Farmer (incl. declared main crops) | Entity | Approval of changes (AWE), as today. **Verification** of the Fayda FAN by a system check (Fayda lookup: trusted source) | Change request → new version |
-| Land (child of Farmer) | Entity | Verification of size and tenure (survey, document). **Attestation**: land certificate | Change request; the land certificate is revoked and reissued on change |
+| Land (child of Farmer) | Entity | Verification of size and tenure (survey, document) | Change request; verification of the changed fields goes back to pending |
 | Household, members | Entity | As Farmer | Change request |
 | Livestock (child of Farmer) | Entity | As Farmer | Change request. Kept until a Livestock registry exists |
 | *(later)* Farm visits, trainings | Occurrence | Verification optional | Supersede / void |
 
-Nothing changes for the Farmer Registry unless it adopts field verification or certificates. Its existing verification table and AWE approvals become the default trust policy.
+Nothing changes for the Farmer Registry unless it adopts field verification. Its existing verification table becomes verification records, and AWE approval of changes stays as it is.
 
 ### Crop Sown Registry (occurrences, plus a cluster entity)
 
-| Register | Kind | Trust policy | Notes |
+| Register | Kind | Verification | Notes |
 |---|---|---|---|
-| CropSown | Occurrence. Types: Planned, Land prepared, Sown, Growth observed, Infestation reported, Damage reported, Harvested. Context: plot × crop year × season × crop | **Verification:** Sown and Harvested, by a supervisor from photo evidence (as today); Infestation optionally. **Approval** (new): Sown `use:subsidy`, Harvested `use:official-figure`; off otherwise. **Attestation** (new): crop certificate from a verified (and, where required, approved) sowing | Participants: farmer (primary), plot, development agent. The farmer and plot are external references to the Farmer Registry, checked for format. Location = the plot's woreda |
+| CropSown | Occurrence. Types: Planned, Land prepared, Sown, Growth observed, Infestation reported, Damage reported, Harvested. Context: plot × crop year × season × crop | **Verification:** Sown and Harvested, by a supervisor from photo evidence (as today); Infestation optionally | Participants: farmer (primary), plot, development agent. The farmer and plot are external references to the Farmer Registry, checked for format. Location = the plot's woreda |
 | **Cluster** (proposed) | **Entity** | Approval of changes | Holds the cluster's attributes and membership, which the `CLUSTER_ENROLLED` activity carries today. Clusters and membership are maintained here first; activities only refer to the cluster. Cluster totals are derived from the plot activities |
 
 **Corrections:**
 - a wrong area → a sowing that supersedes the old one;
 - a sowing that didn't happen → void;
-- if a certificate or subsidy was issued, it is revoked and reissued from the correction.
+- the correcting activity is verified again where its type requires it; programmes (PBMS) are told of the change.
 
 **Resurvey:** a correction supersedes; a later observation is a new Growth observed.
 
 ### Livestock Registry (an entity and occurrences in one registry)
 
-| Register | Kind | Trust policy | Notes |
+| Register | Kind | Verification | Notes |
 |---|---|---|---|
 | Animal | Entity (animal ID, species, sex, date of birth, current owner) | Approval of changes | The current owner is authoritative entity data |
 | Veterinarian (or a provider registry) | Entity | — | May be in another registry |
-| Livestock events | Occurrence. Types: Born, Vaccinated, Treated, Sold. Context: the animal | **Vaccinated:** verified by a **trusted source** (the vet's authenticated system); approval only `use:campaign-payment` or `use:coverage-figure`; attestation: vaccination certificate. **Sold:** approval when it's an official transfer. **Born:** off unless a birth certificate is issued | Participants: animal (primary), farmer, vet (and dam for Born) |
+| Livestock events | Occurrence. Types: Born, Vaccinated, Treated, Sold. Context: the animal | **Vaccinated:** verified by a **trusted source** (the vet's authenticated system). **Sold:** verified when it is an official transfer. **Born:** off | Participants: animal (primary), farmer, vet (and dam for Born) |
 
 **Entities first:**
 - a newborn animal is **registered** in the Animal register, then the Born occurrence is recorded;
@@ -204,7 +200,7 @@ Nothing changes for the Farmer Registry unless it adopts field verification or c
 The occurrences are the history. Current animal status (e.g. last vaccinated, sold) is **derived** from the events in the context's projection; the authoritative owner is the Animal register's.
 
 **Corrections:**
-- a wrong batch or dose → a vaccination that supersedes the old one (approval if the type requires it); the certificate is revoked and reissued;
+- a wrong batch or dose → a vaccination that supersedes the old one, verified again;
 - a sale that didn't happen → void the Sold occurrence, and correct the owner through the Animal register's own change request.
 
 ## 6. APIs: what changes
@@ -224,10 +220,9 @@ The occurrences are the history. Current animal status (e.g. last vaccinated, so
 
 | Area | Change |
 |---|---|
-| **Trust (new, common)** | `/trust/*`:<br>• get the trust policy for a register, type or field;<br>• add a trust record (verify, approve, reject, attest, dispute) on any target (record, section, field, change request, occurrence), with evidence;<br>• list a target's trust records and trust status;<br>• list items awaiting a trust step (a work queue per step).<br>`/verifications/*` and `/activity/verify_activity`, `reject_activity` remain as shortcuts onto it. |
-| **Corrections (common)** | `/corrections/*`:<br>• submit a correction on any target, with a reason and the corrected data;<br>• list pending corrections;<br>• decide one.<br>Entity corrections become change requests (existing flow); occurrence corrections become supersedes, held for approval when policy requires. `supersede_activity` and `void_activity` remain. |
+| **Verification (new, common)** | `/verification/*`:<br>• get the verification policy for a register, section, field or activity type;<br>• add a verification record (verified, failed, dispute) on any target (record, section, field, occurrence), with evidence;<br>• list a target's verification records and status;<br>• list items awaiting verification (a work queue).<br>`/verifications/*` and `/activity/verify_activity`, `reject_activity` remain as shortcuts onto it. |
+| **Corrections** | Entity corrections are change requests marked as corrections (existing flow, approved in AWE); occurrence corrections are supersedes. Both reset the verification of what they touch. `supersede_activity` and `void_activity` remain. |
 | **Participants** *(built, phase 1)* | `append_activity` / `append_activities` accept `participants[]` (role and ID; the type comes from configuration). `search_activities` filters by participant and role. The profile tab covers every role, not only the subject. |
-| **Certificates** | Issue, revoke and list certificates for a record or occurrence, reusing the agent portal's VC issuance, which the staff API calls |
 | **Entity registers** | Locations as named levels on records; reference rules on entity sections; idempotency keys on entity ingestion |
 
 **Partner API**
@@ -235,32 +230,29 @@ The occurrences are the history. Current animal status (e.g. last vaccinated, so
 | Area | Change |
 |---|---|
 | **Corrections by partners** *(built, phase 1)* | `/partner/activity/correct_activities`: supersede or void with a reason, same signed envelope. Today partners can only append. Entity corrections continue through `/partner/ingest_data` as change requests. |
-| **Trusted-source submissions** | Partner Management marks a partner as a **trusted source** for given activity types. Its signed submissions record an automatic verification. A payload may carry a **signed attestation** (e.g. the vet's signature), stored as a trust record. |
+| **Trusted-source submissions** | Partner Management marks a partner as a **trusted source** for given activity types or fields. Its signed submissions record an automatic verification, with the signature as evidence. |
 | **Participants** *(built, phase 1)* | `append_activities` accepts `participants[]` |
-| **DCI: trust in responses** | Records, activities, crop-season state and aggregates carry their **trust status** under a `trust` key, clamped like any other scope. Searches can require a status, e.g. only **approved** sowings, the filter a subsidy scheme needs. |
-| **DCI: subscribe / notify** | Subscribe to occurrence events (appended, superseded, voided, verified, approved), published from the existing outbox, so a programme hears when a sowing is approved or corrected |
-| **Certificates** | No registry API needed: partners check certificates with the VC verifier (agent portal / Inji Verify) |
+| **DCI: verification in responses** | Records, activities, crop-season state and aggregates carry their **verification status**, clamped like any other scope. Searches can require a status, e.g. only **verified** sowings. |
+| **DCI: subscribe / notify** | Subscribe to occurrence events (appended, superseded, voided, verified), published from the existing outbox, so a programme hears when a sowing is verified or corrected |
 
 **Beneficiary API**
 
 | Area | Change |
 |---|---|
 | **Own occurrences (new)** | A farmer's own activities, crop seasons (context state) and summaries |
-| **Own certificates (new)** | List and fetch; hand over to a wallet (existing VC flow) |
-| **Disputes (new)** | Dispute a record or occurrence about oneself, recorded as a trust record, for staff to resolve through a correction or a confirmation |
+| **Disputes (new)** | Dispute a record or occurrence about oneself, recorded against it, for staff to resolve by verification and, if the claim holds, a correction |
 
-**Agent portal API:** extend VC issuance from register records to occurrences (crop, vaccination and training certificates).
 
 **Compatibility.** All of this is additive:
 - existing endpoints keep working;
-- the default trust policy reproduces today's behaviour (AWE approvals on change requests; verification only where `requires_verification` is set);
+- the default verification policy reproduces today's behaviour (verification only where `requires_verification` is set; AWE approval of changes unchanged);
 - Farmer Registry and NSR need no change until they adopt a new capability.
 
 ## 7. Platform changes, in phases
 
 ### Phase 1 (built)
 
-No trust-layer work: entity change requests keep their AWE approval, and activity verification stays as it was (`requires_verification` per type).
+No verification work: entity change requests keep their AWE approval, and activity verification stays as it was (`requires_verification` per type).
 
 | Change | Where | What was built |
 |---|---|---|
@@ -288,9 +280,8 @@ CSR's samples are past and current Meher and Belg seasons for the adult sample p
 
 ### Phase 2 (proposed)
 
-1. **Trust layer.** Trust policies, trust records and trust status for both kinds, absorbing today's verification table and activity verification columns. This includes field verification, automatic verification from trusted sources, and trust status in DCI.
-2. **Correction model.** A common correction request with approval by policy, and disputes.
-3. **Certificates.** Attestation through VC issuance for occurrences as well as entities, with revoke and reissue on correction.
+1. **Verification model** (section 2), common to both kinds: verification policies per field, section, record or activity type; verification records with evidence; derived status; automatic verification from trusted sources; status in DCI. It absorbs today's verification table and activity verification columns.
+2. **Corrections and disputes.** Entity corrections marked as such on change requests; disputes; a change or correction resets verification.
 4. **Shared capabilities on entity registers:** named-level locations, reference rules, idempotent ingestion.
 5. **Beneficiary API for occurrences** (it needs beneficiary authentication on the registry first), and **DCI subscribe/notify** for occurrence events.
 
@@ -298,11 +289,11 @@ CSR's samples are past and current Meher and Belg seasons for the adult sample p
 
 | Question | Decision |
 |---|---|
-| Trust policy on entity registers: per field or per section? | **Per section** |
-| Certificates for plans? | **No.** Certificates only for occurrences that happened |
+| Certificates and programme approval in the registry? | **No.** The registry keeps records authentic and verified; whether a programme acts on them (approval, eligibility, payment) is decided in PBMS. VC issuance stays as it is, outside the verification model |
 | Participant IDs: plain or typed? | **Always typed** (register or system + ID). The activity type supplies the type; submitters send role + ID |
 | Occurrences changing entities (birth creates an animal, sale changes the owner)? | **No: entities first.** The entity register is updated before any occurrence about the entity is recorded |
-| Trust status vocabulary | From standards where they exist: the platform's approval statuses, W3C VC status lists for certificates, FHIR equivalents for the occurrence lifecycle. One summary label: Recorded → Verified → Approved → Attested (section 2) |
+| Verification vocabulary | `NOT_REQUIRED`, `PENDING`, `VERIFIED`, `FAILED`, `DISPUTED`. Occurrence lifecycle as built (`ACTIVE`, `SUPERSEDED`, `VOIDED`; FHIR `amended` / `entered-in-error`) |
+| What is verified | **Configurable per case:** a field, a section, the whole record, or an activity type. Each target says whether it is required, which methods count, who verifies and what evidence |
 | Temporary IDs | **Withdrawn.** Offline capture registers the entity first |
 | Sample data across registries | **Shared by convention, not by reading another registry's database.** IDs derive from Master Data's sample people |
 | Cluster changes | **Approved in AWE,** like other entity registers |

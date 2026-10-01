@@ -95,7 +95,7 @@ A background worker then works through the outbox:
 - runs **enrichment** (e.g. weather data), stored beside the activity and never inside it;
 - runs **aggregates**, e.g. a farmer's season summary, recomputed from current data and kept with history.
 
-**Corrections:** supersede (replace), void (withdraw), or verify/reject. Each needs a reason, and none is allowed inside a closed period.
+**Corrections:** supersede (replace) or void (withdraw). Each needs a reason, and none is allowed inside a closed period. **Verification** (verify or reject) is separate: it records whether the activity is true and never changes it. The [terms](register-model-design.md#the-terms) (validation, change, correction, void, approval, verification, dispute) are defined in the register model design.
 
 ## 5. How data is read
 
@@ -121,7 +121,8 @@ Geography is stored on every activity as **named levels** (`{"region": {"code": 
 
 | | Register | Activity register |
 |---|---|---|
-| **Approval** | AWE workflows on change requests | Optional verification (submitted → verified / rejected) per activity type |
+| **Approval of changes** (who may change data) | AWE workflows on change requests | Not needed: appends and corrections are governed by permissions and rules |
+| **Verification** (is it true) | A verification table tied to change requests | Optional verification (submitted → verified / rejected) per activity type |
 | **Closing a period** | — | Period locks: no writes or corrections inside a closed period, with controlled reopening |
 | **Permissions** | `register:*` and change-request actions | `activity:view`, `create`, `correct`, `verify`, `configure` |
 | **Data policies** | Filter records; a policy on a missing column is skipped | Filter activities and projections; a policy on a missing column **denies** access (fails closed) |

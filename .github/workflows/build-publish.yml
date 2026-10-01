@@ -9,6 +9,12 @@ on:
   push:
     branches: ["**"]
     tags: ["**"]
+    # agri-stack is mostly design docs; only the composite is built. A push that
+    # touches only docs/ must not build or publish a new composite version.
+    # (Path filters don't apply to tag pushes, so release tags still build.)
+    paths:
+      - "composite/**"
+      - ".github/workflows/build-publish.yml"
   workflow_dispatch:
     inputs:
       changelog_skip_ai:

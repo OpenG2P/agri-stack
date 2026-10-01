@@ -35,7 +35,6 @@ These differences are necessary; merging them would cost correctness or scale.
 | **What "the value" is** | The latest version | All the records combined: total harvest, days present, doses given | Occurrences are summed or counted; versions never are |
 | **Identity** | Functional ID, dedup, registrant authentication | Idempotency key | Two sowings on one plot are two facts, not duplicates |
 | **Grouping** | Parent/child records (Farmer → Land) | Contexts (one crop on one plot in one season) | A crop season is a thread of events, not an entity |
-| **Current state** | The record itself | Derived: projections and aggregates | See "What the value is" |
 | **Time** | Valid from a date | Occurred at + recorded at; backdating limits; due windows; closed periods | Payroll, seasons and campaigns close |
 | **Storage** | Table + history table | Append-only table, partitioned by year | Volume: people × days, plots × seasons × stages |
 
@@ -55,11 +54,12 @@ These should work the same for entities and occurrences, and some of them are bu
 |---|---|---|---|
 | **Verification** | A verification table tied to change requests (changes themselves are approved in AWE) | Verification columns on the activity | **One verification model** (section 2) |
 | **Corrections** | Change request → new version + history | Supersede / void, with a reason | **One correction model** (section 3) |
-| **Forms** | Sections and tabs of widgets | Generated from each type's JSON Schema | Either works for either kind. Allow JSON-Schema forms on entity sections, and section layouts on activity types (`section_ui_schema` exists) |
+| **Derived values** (projections, aggregates, indicators) | None (only completion scores) | Built: a context's current state, a subject's summaries, indicators | **Both kinds.** An entity register needs them too: a farmer's total land area, a household's size, a worker's years of service. What differs is only what they are computed from (see "What the value is") |
+| **Forms** | Sections and tabs of widgets | Generated from each type's JSON Schema | **One form definition for both kinds**: the same schema, widgets and layout. Only what happens on submit differs: a change request creates a new version of an entity; an append adds an occurrence. Today each kind has its own form mechanism; either should work for either (`section_ui_schema` exists on activity types) |
 | **Reference rules** (code list, geography, local record, external ID; strict / lenient) | Widget-bound code lists only | Built | Available to entity registers too |
 | **Location as named levels** (`geo_dimensions`) | `geo_code_hierarchy_json` on the record | Built | Named levels on entity records too, for area statistics |
 | **Idempotent ingestion, submission IDs, schema versions** | No | Built | Both kinds |
-| **Participants with roles** | Parent links only | One subject + payload references | **Typed participants** (section 4) |
+| **Participants with roles**: the records involved, each in a named role (a vaccination: the animal, its owner, the vet who gave it) | One link: a child points to its parent (Land → Farmer) | Built in phase 1: each activity stores its participants, typed (`role: vet, register: Veterinarian, id: V789`), so "all vaccinations by vet V789" is a direct query | Entity records could use the same for relations beyond a parent (a farmer's cooperative, a worker's employer); not yet needed (section 4) |
 | **Sharing** (DCI, consent, data policies) | Built | Built | Both kinds, plus trust status (section 6) |
 
 ## 2. Trust layer: verification
@@ -97,6 +97,8 @@ For each target, the policy says:
 - **who** may verify (roles);
 - what **evidence** is expected (a photo, a document, a device capture).
 
+**Verification by an activity.** A field verification is itself something that happened, so it can be recorded as an **activity**: a site visit with a photo, GPS coordinates and a short form, whose participant is the record being checked (a sowing, a land parcel, a farmer). The verification activity type declares what it verifies, and its outcome creates the verification record, with the activity as its evidence. That gives verification a date, a place and evidence, ODK and agent capture, and a work list of visits due. The **status** still sits on the target, because it is also set by other methods (a Fayda lookup, a trusted device) and is what resets on change and what APIs filter on: the visit is the evidence, the status the result.
+
 **Verification records** are attached to a target. Each one holds:
 - **outcome** (verified / failed) and **method**;
 - **actor** (person, system or source);
@@ -112,7 +114,7 @@ A target can have several: a verification, a dispute, a re-verification. The log
 **Mapping from today:**
 - `g2p_register_verifications` (entities) and the verification columns on activities both become **verification records**;
 - AWE approval of change requests stays as it is: it governs changes, not truth;
-- certificates (VC issuance in the agent portal) are unchanged and outside this model.
+- certificates are **verifiable credentials**, issued by the existing VC feature (agent portal with Inji Certify), not a trust step. Each issuance is logged against the record (`g2p_vc_issuances`); the credential's ID is Certify's `credential_id`, and Certify's ledger holds its status. A reprint is a new credential linked to the previous one. Not yet done: when the record a credential was issued from is changed or corrected, the credential isn't suspended or revoked.
 
 Existing behaviour is the default policy, so the Farmer Registry and NSR behave as before.
 

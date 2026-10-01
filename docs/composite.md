@@ -53,7 +53,8 @@ sources:
     requirement: optional
     request_scopes: [crop:season]
     dci:
-      reg_type: CropActivity
+      reg_type: CropSown
+      reg_record_type: spdci-extensions-agri:ActivityAggregate   # the farmer's season summaries
       query_template: templates/crop-seasons.json.j2   # uses parameters.seasons
     timeout_ms: 2500
     retries: 1
@@ -135,6 +136,52 @@ Publishing is done by the Agri Stack platform team. Because the configuration ca
    - maps the results, computes derived fields, adds the per-source status, and validates against the schema
    - responds, then discards everything
 5. **Audit:** every step sends an audit event, linked by the request ID.
+
+## Worked example: wheat sown by a farmer this season
+
+The question is "total area of wheat sown by farmer X in this season". Both registries answer with one **synchronous** DCI call each, `POST /dci/registry/sync/search`. Neither registry has an asynchronous search, so the composite never waits for a callback.
+
+**Farmer Registry:** who the farmer is. Search the Farmer register by Fayda FAN (`foundational_id`) or farmer ID (`functional_record_id`):
+
+```json
+"search_criteria": {
+  "reg_type": "Farmer",
+  "query_type": "expression",
+  "query": {"type": "expression", "value": {"expression": {"query": {"foundational_id": {"$eq": "<FAN>"}}}}}
+}
+```
+
+The farmer record carries both identifiers, `UIN` (the FAN) and `FARMER_ID` (e.g. `FR-0007`). It comes with the farmer's linked records (land, household, crops, livestock) whether the search is by exact field or by ID.
+
+Any question about one farmer follows the same pattern: the farmer's record from the Farmer Registry, and from the Crop Sown Registry the farmer's activities, crop seasons or season summaries, each filtered on its own fields. Nothing in the registries is specific to a particular question.
+
+**Crop Sown Registry:** what they sowed. Search the farmer's season summary for the crop year and season:
+
+```json
+"search_criteria": {
+  "reg_type": "CropSown",
+  "reg_record_type": "spdci-extensions-agri:ActivityAggregate",
+  "query_type": "expression",
+  "query": {"type": "expression", "value": {"expression": {"query": {
+    "subject_id": "FR-0007", "aggregate_type": "FARMER_SEASON_SUMMARY",
+    "crop_year": 2019, "season": "SEASON_MEHER"}}}}
+}
+```
+
+One record comes back. The answer is at `measures.by_crop.CROP_WHEAT.area_sown_ha`, beside the season's totals and the other crops. Alternatively, `reg_record_type: spdci-extensions-agri:CropSeason` with `"crop": "CROP_WHEAT"` returns the wheat crop seasons, one per plot, each with its `area_sown_ha`, stage and whether sowing was verified. The mapping then sums them.
+
+| | Season summary (`…:ActivityAggregate`) | Crop seasons (`…:CropSeason`) |
+|---|---|---|
+| Records | One per farmer and season | One per plot and crop |
+| Answer | Read one field | Sum over plots |
+| Freshness | Updated by the outbox worker, seconds after each activity | Updated in the same transaction as each activity |
+| Filters | `aggregate_type`, `period_key`, `crop_year`, `season` | Any plain projection column: `crop_year`, `season`, `crop`, `stage`, `plot_id`… |
+
+**Sequencing.** The Crop Sown Registry knows the farmer by farmer ID, not by FAN.
+- **The partner sends a farmer ID:** both sources are called in parallel.
+- **The partner sends a FAN:** the Farmer Registry is called first, and the Crop Sown query uses the `FARMER_ID` it returns. The source then declares `depends_on: farmer`, and its query template reads the farmer ID from the farmer result.
+
+**"This season"** is resolved by the composite (the crop year and season from today's date, using the season windows in the [Crop Sown Registry](crop-sown-registry.md#farmers-season-summary)) and passed as parameters. Without them, the summaries come back newest first.
 
 ## Response to the partner (example)
 

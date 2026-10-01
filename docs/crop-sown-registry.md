@@ -147,7 +147,11 @@ A plot joins a cluster with a `CLUSTER_ENROLLED` activity. Cluster totals are de
 
 ## Sample data
 
-A demo install loads samples. Production sets `loadSampleData` and `REGISTRY_CELERY_WORKERS_ACTIVITY_LOAD_SAMPLE_DATA` off.
+Sample data is **off by default**. For a demo, turn on two Rancher questions:
+- **Load Sample Data** (`dbSeed.loadSampleData`) loads the sample clusters;
+- **Load sample crop seasons** (`REGISTRY_CELERY_WORKERS_ACTIVITY_LOAD_SAMPLE_DATA`) loads the crop seasons, and is shown only when the first is on.
+
+The crop seasons need the sample clusters, so the second question alone loads nothing.
 
 - **Clusters:** db-seed loads two sample clusters.
 - **Crop seasons:** the platform's sample task records them once, through the normal write path, after the activity types and clusters are loaded.
@@ -185,3 +189,13 @@ All three share one set of consent scopes, the record's top-level keys:
 - `location`
 
 A partner's policy therefore covers all three record types the same way.
+
+**Querying.** Every search is synchronous (`/dci/registry/sync/search`).
+- **By farmer ID** (`idtype-value`): every crop season or summary of the farmer.
+- **Filtered** (`expression`): `subject_id` (the farmer ID) plus filters.
+  - Activities can be filtered by any plain field: `activity_type`, `occurred_at`, `verification_status`, `crop`, `plot_id`…
+  - Crop seasons can be filtered by any plain projection column, e.g. `crop_year`, `season`, `crop`, `stage`.
+  - Summaries can be filtered by `aggregate_type`, `period_key`, `crop_year` and `season`.
+  - The operators are those of entity searches (`$eq`, `$in`, `$gte`…).
+
+Results come newest first, so "the farmer's last 10 activities" needs no filter: `page_size: 10`. For example, "wheat sown by FR-0007 in Meher 2019" is the summary for `crop_year: 2019`, `season: SEASON_MEHER`, read at `measures.by_crop.CROP_WHEAT.area_sown_ha`. See the [composite worked example](composite.md#worked-example-wheat-sown-by-a-farmer-this-season).

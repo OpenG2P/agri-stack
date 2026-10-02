@@ -1,7 +1,7 @@
 """Use-case configuration schema (one YAML file per use case).
 
 Validation is strict: unknown keys are errors. Keys from the design
-(docs/composite.md) that this service does not act on yet are accepted and
+(Open Agri Stack docs: https://docs.openg2p.org/open-agri-stack/design/use-case-composite) that this service does not act on yet are accepted and
 listed in ``NOT_ENFORCED`` so a file written against the full design still
 loads; the loader logs them once.
 """

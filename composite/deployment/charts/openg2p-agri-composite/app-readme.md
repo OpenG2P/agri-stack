@@ -14,4 +14,4 @@ in the **Edit YAML** view of the values (one entry per use case), or point
 `composite.existingUseCasesConfigMap` at your own ConfigMap. Running pods pick up changes within about
 a minute, without a restart.
 
-Full documentation: [Agri Stack docs](https://github.com/openg2p/agri-stack/tree/develop/docs).
+Full documentation: [Open Agri Stack](https://docs.openg2p.org/open-agri-stack) on the OpenG2P documentation site.

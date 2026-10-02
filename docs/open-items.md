@@ -30,6 +30,9 @@
   5. a season-window date check.
 
   Programme approval and certificates are not registry work: PBMS decides whether a programme acts on verified records.
+- **TODO: geo dropdowns on register forms.** A register's geo dropdowns (how many, which levels) are fixed in each extension's seed metadata; the values come from Master Data, but a country whose levels differ gets empty dropdowns. "Match geo dropdowns to country" (`syncGeoWidgets`) rewrites them at install, and is off by default in the registry platform (on in FR, off in CSR, whose Cluster register has a woreda dropdown).
+  - **Next:** default it on in the registry platform and remove it from the Rancher form, keeping it only as a values setting for deployments that have hand-edited their geo dropdowns.
+  - **Later:** have register forms read Master Data's levels when they load, as activity-register forms already do, so the sync and the switch go away.
 - **Credentials after a change.** Certificates are verifiable credentials issued from a record (agent portal, Inji Certify). When that record is changed or corrected, credentials already issued from it stay valid. Decide whether a change suspends or revokes them (through Certify's status list) and prompts reissue.
 - **Who may search across subjects.** Activity-register aggregates can be searched without a subject (e.g. for a benefit run). Today the registry operator allow-lists those partners and their scopes in the partner API's configuration (`dci_bulk_aggregate_partners`), because there is no per-person consent for such a search. This belongs in a Partner Management policy (a programme's legal basis for bulk access, approved by the department), checked like any other policy.
 - **Sample data at the registries' edges.** The CSR sample farmer and plot IDs match the Farmer Registry's only by convention (`FR-<n>`, `LAND-<n>-<k>` from Master Data's sample people). If either registry changes its sample ID rule, the other must follow.

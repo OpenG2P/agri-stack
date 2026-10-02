@@ -65,6 +65,126 @@ def public_pem(key) -> str:
     ).decode()
 
 
+def private_pem(key) -> bytes:
+    return key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                             serialization.NoEncryption())
+
+
+def utc_ts(now=None) -> str:
+    """DCI header timestamp, e.g. 2026-10-01T10:00:00.000Z."""
+    now = now or datetime.now(timezone.utc)
+    return now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+# ── pure helpers (also used by e2e.py) ───────────────────────────────────────
+
+DEFAULT_PURPOSE = "credit-assessment"
+SUBJECT_ID_TYPES = ["FAYDA_FAN", "FARMER_ID"]
+SIGNING_ALG = "ES256"  # the kit's keys are EC P-256
+POLICY_MAX_VALIDITY = "P90D"
+
+
+def generate_partner_key():
+    return ec.generate_private_key(ec.SECP256R1())
+
+
+def generate_composite_p12(composite_id: str, password: str, days: int = 365):
+    """A new EC key and self-signed certificate as a .p12. Returns (key, p12 bytes)."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, composite_id)])
+    now = datetime.now(timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(minutes=5))
+            .not_valid_after(now + timedelta(days=days)).sign(key, hashes.SHA256()))
+    p12 = pkcs12.serialize_key_and_certificates(
+        composite_id.encode(), key, cert, None, serialization.BestAvailableEncryption(password.encode()))
+    return key, p12
+
+
+def load_p12_key(p12: bytes, password: str):
+    key, _cert, _extra = pkcs12.load_key_and_certificates(p12, password.encode() if password else None)
+    return key
+
+
+def onboarding_payload(partner_id: str, label: str, key, kid: str) -> dict:
+    """PM staff API body for POST /partners/requests/onboarding."""
+    return {"partner_id": pm_reference(partner_id), "name": label, "org_name": label,
+            "description": "Agri Stack composite test (TEST)",
+            "keys": [{"public_key": public_pem(key), "kid": kid, "algorithm": SIGNING_ALG}]}
+
+
+def binding_payload(audience: str, controller: str) -> dict:
+    """CM staff API body for POST /consent/v1/partners (one binding per controller)."""
+    return {"audience": audience, "controller_id": controller, "partner_mgmt_id": pm_reference(audience),
+            "name": f"TEST {audience} → {controller}"}
+
+
+def policy_payload(controller: str, purpose: str = DEFAULT_PURPOSE) -> dict:
+    """CM staff API body for PUT /consent/v1/partners/{id}/policy."""
+    return {"allowed_data_scopes": list(GRANTS[controller]), "allowed_purposes": [purpose],
+            "allowed_subject_id_types": list(SUBJECT_ID_TYPES), "allowed_signing_algs": [SIGNING_ALG],
+            "max_validity_duration": POLICY_MAX_VALIDITY, "fetch_type": "oneshot"}
+
+
+def make_consent(key, *, partner: str, kid: str, subject: dict, purpose: str = DEFAULT_PURPOSE,
+                 controllers=None, valid_days: float = 30, now=None) -> str:
+    """Partner-signed consent (compact JWS) with one grant per controller."""
+    now = now or datetime.now(timezone.utc)
+    controllers = list(GRANTS) if controllers is None else list(controllers)
+    claims = {
+        "jti": str(uuid.uuid4()),
+        "aud": partner,
+        "subject_id": dict(subject),
+        "purpose": {"code": purpose},
+        "grants": [{"data_controller": c, "data_scopes": s} for c, s in GRANTS.items() if c in controllers],
+        "fetch_type": "oneshot",
+        "validity": {"valid_from": now.isoformat(timespec="seconds"),
+                     "valid_until": (now + timedelta(days=valid_days)).isoformat(timespec="seconds")},
+        "issued_at": now.isoformat(timespec="seconds"),
+    }
+    return PyJWS().encode(canonical(claims), key, algorithm=SIGNING_ALG, headers={"kid": kid})
+
+
+def sign_detached(payload: dict, key, kid: str) -> str:
+    """Detached JWS (header..signature) over the canonical JSON of payload."""
+    p1, _p2, p3 = PyJWS().encode(canonical(payload), key, algorithm=SIGNING_ALG, headers={"kid": kid}).split(".")
+    return f"{p1}..{p3}"
+
+
+def build_query_envelope(key, *, partner: str, kid: str, composite: str, subject: dict, parameters=None,
+                         consent_jws=None, now=None) -> dict:
+    """The signed request envelope a partner posts to .../use-cases/{use_case}/query."""
+    header = {"version": "1.0.0", "message_id": str(uuid.uuid4()), "message_ts": utc_ts(now),
+              "action": "query", "sender_id": partner, "receiver_id": composite}
+    message = {"subject": dict(subject), "parameters": dict(parameters or {})}
+    if consent_jws:
+        message["consent_jws"] = consent_jws
+    return {"signature": sign_detached({"header": header, "message": message}, key, kid),
+            "header": header, "message": message}
+
+
+def jws_header(jws: str) -> dict:
+    first = (jws or "").split(".")[0]
+    try:
+        return json.loads(base64.urlsafe_b64decode(first + "=" * (-len(first) % 4)))
+    except ValueError:
+        return {}
+
+
+def verify_response_with_key(body, public_key) -> str:
+    """'valid', 'MISSING' or 'INVALID (...)' for the composite's detached signature."""
+    sig = (body or {}).get("signature") or ""
+    parts = sig.split(".")
+    if len(parts) != 3:
+        return "MISSING"
+    full = f"{parts[0]}.{b64u(canonical({'header': body['header'], 'message': body['message']}))}.{parts[2]}"
+    try:
+        PyJWS().decode(full, public_key, algorithms=["ES256", "RS256", "EdDSA"])
+        return "valid"
+    except Exception as e:
+        return f"INVALID ({e})"
+
+
 # ── keys ─────────────────────────────────────────────────────────────────────
 
 def cmd_keys(a):
@@ -73,22 +193,15 @@ def cmd_keys(a):
     if os.path.exists(partner_key_path) and not a.force:
         sys.exit(f"{partner_key_path} exists; use --force to replace the keys")
 
-    partner = ec.generate_private_key(ec.SECP256R1())
+    partner = generate_partner_key()
     with open(partner_key_path, "wb") as fh:
-        fh.write(partner.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-                                       serialization.NoEncryption()))
+        fh.write(private_pem(partner))
     os.chmod(partner_key_path, 0o600)
 
-    composite = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, a.composite)])
-    now = datetime.now(timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(composite.public_key())
-            .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(minutes=5))
-            .not_valid_after(now + timedelta(days=a.days)).sign(composite, hashes.SHA256()))
+    composite, p12 = generate_composite_p12(a.composite, a.p12_password, a.days)
     p12_path = os.path.join(a.out, "composite.p12")
     with open(p12_path, "wb") as fh:
-        fh.write(pkcs12.serialize_key_and_certificates(
-            a.composite.encode(), composite, cert, None, serialization.BestAvailableEncryption(a.p12_password.encode())))
+        fh.write(p12)
     os.chmod(p12_path, 0o600)
     with open(os.path.join(a.out, "composite.pub.pem"), "w") as fh:
         fh.write(public_pem(composite))
@@ -96,32 +209,22 @@ def cmd_keys(a):
         json.dump({"partner": a.partner, "partner_kid": a.partner_kid, "composite": a.composite,
                    "composite_kid": a.composite_kid}, fh, indent=2)
 
-    def onboarding(pid, label, key, kid):
-        return {"partner_id": pm_reference(pid), "name": label, "org_name": label,
-                "description": "Agri Stack composite test (TEST)",
-                "keys": [{"public_key": public_pem(key), "kid": kid, "algorithm": "ES256"}]}
-
     print(f"Wrote {partner_key_path}, {p12_path} (password '{a.p12_password}'), composite.pub.pem, kit.json in {a.out}\n")
     print("1. Partner Management — onboard both, then approve each request")
     print("   (POST {pm-staff-portal-api}/partners/requests/onboarding, then POST /partners/requests/{id}/approve,")
     print("    as a client with PM's partner_manager role):\n")
-    print(json.dumps(onboarding(a.partner, f"TEST {a.partner}", partner, a.partner_kid), indent=2))
-    print(json.dumps(onboarding(a.composite, "Agri Stack composite", composite, a.composite_kid), indent=2))
+    print(json.dumps(onboarding_payload(a.partner, f"TEST {a.partner}", partner, a.partner_kid), indent=2))
+    print(json.dumps(onboarding_payload(a.composite, "Agri Stack composite", composite, a.composite_kid), indent=2))
     print("\n2. The composite's signing key Secret (namespace of the composite):\n")
     print(f"   kubectl -n <ns> create secret generic agri-composite-signing \\\n"
           f"     --from-file=composite.p12={p12_path} --from-literal=password='{a.p12_password}' \\\n"
           f"     --from-literal=kid={a.composite_kid} --from-literal=algorithm=auto")
     print("\n3. Consent Manager — bind the partner's audience to each registry with a policy")
     print("   (POST {cm-staff-api}/consent/v1/partners, then PUT /consent/v1/partners/{id}/policy, admin role):\n")
-    for controller, scopes in GRANTS.items():
-        binding = {"audience": a.partner, "controller_id": controller, "partner_mgmt_id": pm_reference(a.partner),
-                   "name": f"TEST {a.partner} → {controller}"}
-        policy = {"allowed_data_scopes": scopes, "allowed_purposes": [a.purpose],
-                  "allowed_subject_id_types": ["FAYDA_FAN", "FARMER_ID"], "allowed_signing_algs": ["ES256"],
-                  "max_validity_duration": "P90D", "fetch_type": "oneshot"}
+    for controller in GRANTS:
         print(f"   {controller}:")
-        print("   binding " + json.dumps(binding))
-        print("   policy  " + json.dumps(policy))
+        print("   binding " + json.dumps(binding_payload(a.partner, controller)))
+        print("   policy  " + json.dumps(policy_payload(controller, a.purpose)))
     print(f"\n4. The use case must allow the partner: allowed_partners: [{a.partner}] (loan-profile has bank-a).")
 
 
@@ -144,19 +247,8 @@ def parse_subject(text):
 
 
 def build_consent(a, key) -> str:
-    now = datetime.now(timezone.utc)
-    claims = {
-        "jti": str(uuid.uuid4()),
-        "aud": a.partner,
-        "subject_id": parse_subject(a.subject),
-        "purpose": {"code": a.purpose},
-        "grants": [{"data_controller": c, "data_scopes": s} for c, s in GRANTS.items() if c in a.controllers],
-        "fetch_type": "oneshot",
-        "validity": {"valid_from": now.isoformat(timespec="seconds"),
-                     "valid_until": (now + timedelta(days=a.valid_days)).isoformat(timespec="seconds")},
-        "issued_at": now.isoformat(timespec="seconds"),
-    }
-    return PyJWS().encode(canonical(claims), key, algorithm="ES256", headers={"kid": a.partner_kid})
+    return make_consent(key, partner=a.partner, kid=a.partner_kid, subject=parse_subject(a.subject),
+                        purpose=a.purpose, controllers=a.controllers, valid_days=a.valid_days)
 
 
 def cmd_consent(a):
@@ -203,30 +295,14 @@ def verify_response(body, pub_path) -> str:
             pub = serialization.load_pem_public_key(fh.read())
     except FileNotFoundError:
         return f"not checked (no {pub_path})"
-    sig = body.get("signature") or ""
-    parts = sig.split(".")
-    if len(parts) != 3:
-        return "MISSING"
-    full = f"{parts[0]}.{b64u(canonical({'header': body['header'], 'message': body['message']}))}.{parts[2]}"
-    try:
-        PyJWS().decode(full, pub, algorithms=["ES256", "RS256", "EdDSA"])
-        return "valid"
-    except Exception as e:
-        return f"INVALID ({e})"
+    return verify_response_with_key(body, pub)
 
 
 def cmd_call(a):
     key = _load_partner_key(a)
-    header = {"version": "1.0.0", "message_id": str(uuid.uuid4()),
-              "message_ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-              "action": "query", "sender_id": a.partner, "receiver_id": a.composite}
-    message = {"subject": parse_subject(a.subject), "parameters": _parse_params(a.param)}
-    if not a.no_consent:
-        message["consent_jws"] = build_consent(a, key)
-    full = PyJWS().encode(canonical({"header": header, "message": message}), key, algorithm="ES256",
-                          headers={"kid": a.partner_kid})
-    p1, _p2, p3 = full.split(".")
-    envelope = {"signature": f"{p1}..{p3}", "header": header, "message": message}
+    envelope = build_query_envelope(
+        key, partner=a.partner, kid=a.partner_kid, composite=a.composite, subject=parse_subject(a.subject),
+        parameters=_parse_params(a.param), consent_jws=None if a.no_consent else build_consent(a, key))
     url = f"{a.url.rstrip('/')}/composite/v1/use-cases/{a.use_case}/query"
     print(f"POST {url}", file=sys.stderr)
     status, body = _http("POST", url, envelope, a.insecure)

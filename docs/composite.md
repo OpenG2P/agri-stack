@@ -232,6 +232,8 @@ One record comes back. The answer is at `measures.by_crop.CROP_WHEAT.area_sown_h
 
 **Scaling.** Stateless pods behind a CPU-based autoscaler; a pooled HTTP client per worker; partner keys cached; no database; startup never calls a registry. Rate limits are per pod: global limits and daily quotas belong to the API gateway.
 
+**Using it:** the API, use-case file format, configuration and the end-to-end test from a laptop are in the [composite guide](composite-guide.md).
+
 **Not built yet:**
 - the checks when a use case is published (against PM policies, which PM doesn't hold yet);
 - data-blind mode;

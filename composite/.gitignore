@@ -16,3 +16,9 @@ dist/
 scripts/kit-out/
 *.p12
 *.pem
+
+# e2e.py --emit-postman output: pre-signed requests with a farmer ID
+*.postman.json
+
+# e2e.py responses: a farmer's personal data
+scripts/out/

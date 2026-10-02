@@ -1,6 +1,8 @@
-# Notes on the "Creating a new service" guide
+<p align="center"><img src="images/agri-stack-logo.jpg" alt="Agri Stack — DPI for Agriculture" width="120"></p>
 
-Found while building this service from the guide (<https://docs.openg2p.org/platform/platform-services/creating-a-new-service>) and comparing it with recent services (Consent Manager, Partner Management, Master Data, the registry platform, Farmer and Crop Sown registries). For the guide's maintainers; nothing here changes the composite.
+# Service guide notes
+
+Found while building the [use-case composite](composite.md) from the guide (<https://docs.openg2p.org/platform/platform-services/creating-a-new-service>) and comparing it with recent services (Consent Manager, Partner Management, Master Data, the registry platform, Farmer and Crop Sown registries). For the guide's maintainers; nothing here changes the composite.
 
 | # | The guide says | Current practice | Suggestion |
 |---|---|---|---|

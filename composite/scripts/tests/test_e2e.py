@@ -93,7 +93,13 @@ def test_composite_p12_round_trip():
 def test_payloads():
     assert kit.binding_payload("e2e-bank", "farmer-registry")["partner_mgmt_id"] == "PARTNER_E2E_BANK"
     pol = kit.policy_payload("crop-sown-registry", "credit-assessment")
-    assert pol["allowed_data_scopes"] == ["farmer_reference", "crop_season", "measures", "location"]
+    assert pol["allowed_data_scopes"] == ["crop-sown-registry.farmer_reference", "crop-sown-registry.crop_season",
+                                          "crop-sown-registry.measures", "crop-sown-registry.location"]
+    # Scope IDs are namespaced by the registry they belong to.
+    assert all(s.startswith(f"{c}.") for c, scopes in kit.GRANTS.items() for s in scopes)
+    # The crop sources query the Crop Sown Registry by the farmer ID read from the
+    # farmer record: the Farmer Registry grant must carry it.
+    assert "farmer-registry.farmer_identifiers" in kit.GRANTS["farmer-registry"]
     assert "FAYDA_FAN" in pol["allowed_subject_id_types"] and pol["allowed_signing_algs"] == ["ES256"]
 
 
@@ -223,7 +229,7 @@ def test_cm_everything_in_place_is_ok():
 def test_cm_narrow_policy_is_widened_without_dropping_existing_scopes():
     bindings = [_binding(c) for c in kit.GRANTS]
     policies = {f"b-{c}": [_policy(c)] for c in kit.GRANTS}
-    policies["b-farmer-registry"] = [_policy("farmer-registry", allowed_data_scopes=["farmer_personal_details", "x"])]
+    policies["b-farmer-registry"] = [_policy("farmer-registry", allowed_data_scopes=["farmer-registry.personal_details", "x"])]
     p = e2e.plan_cm(audience="e2e-bank", pm_ref="PARTNER_E2E_BANK", needed=NEEDED, bindings=bindings,
                     policies=policies)
     (act,) = p["actions"]

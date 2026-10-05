@@ -132,9 +132,12 @@ composite:
       # depend on the farmer source and read FARMER_ID from its record (or use the
       # subject itself when the partner sends a FARMER_ID).
       #
-      # Consent (one consent, a grant per registry). The farmer record must include
-      # farmer_personal_details, since that is where the farmer ID is read from:
-      #   farmer-registry:    farmer_personal_details, family_details, farm_details, main_crops
+      # Consent (one consent, a grant per registry) names each registry's data scopes:
+      # scope IDs <registry>.<name> from the registry's catalogue (GET /partner/data_scopes).
+      # The Farmer Registry grant must include farmer-registry.farmer_identifiers: the
+      # farmer ID the crop sources query by is read from it. The partner kit grants:
+      #   farmer-registry:    farmer_identifiers, personal_details, household_location,
+      #                       land, land_location, main_crops
       #   crop-sown-registry: farmer_reference, crop_season, measures, location
       #
       # Template note: keep a space between consecutive braces ("} }", "{ {") so

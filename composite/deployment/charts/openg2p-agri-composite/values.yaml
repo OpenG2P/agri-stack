@@ -189,8 +189,8 @@ composite:
                "query": {"type": "expression",
                          "value": {"expression": {"query": {"{{ field }}": {"$eq": {{ subject.value | tojson }} } } } } },
                "pagination": {"page_size": 1, "page_number": 1} }
-          timeout_ms: 3000
-          retries: 1
+          timeout_ms: 10000
+          retries: 0
 
         - id: season_summaries
           controller: crop-sown-registry
@@ -217,8 +217,8 @@ composite:
                            {%- if parameters.crop_year is not none %}, "crop_year": {{ parameters.crop_year | tojson }}{% endif %}
                            {%- if parameters.season %}, "season": {{ parameters.season | tojson }}{% endif %} } } } },
                "pagination": {"page_size": 20, "page_number": 1} }
-          timeout_ms: 3000
-          retries: 1
+          timeout_ms: 10000
+          retries: 0
 
         - id: crop_seasons
           controller: crop-sown-registry
@@ -244,8 +244,8 @@ composite:
                            {%- if parameters.crop_year is not none %}, "crop_year": {{ parameters.crop_year | tojson }}{% endif %}
                            {%- if parameters.season %}, "season": {{ parameters.season | tojson }}{% endif %} } } } },
                "pagination": {"page_size": 100, "page_number": 1} }
-          timeout_ms: 3000
-          retries: 1
+          timeout_ms: 10000
+          retries: 0
 
       response:
         # JSONPath over {subject, parameters, sources: {<id>: {status, records: [...]}}}.
@@ -268,7 +268,7 @@ composite:
         source_status: true
 
       execution:
-        overall_timeout_ms: 8000
+        overall_timeout_ms: 25000
         partial_response: allowed   # a failing mandatory source (farmer) fails the request
 
       limits:

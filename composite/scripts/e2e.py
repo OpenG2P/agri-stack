@@ -6,10 +6,13 @@ services through `kubectl port-forward` (closed on exit), sets up a test partner
 and the composite's signing key, picks a farmer who has crop seasons, calls the
 `loan-profile` use case and prints the composite's JSON answer.
 
-  python composite/scripts/e2e.py --namespace trial --dry-run      # look only: GETs and SELECTs
-  python composite/scripts/e2e.py --namespace trial                # set up (asks first), then call
-  python composite/scripts/e2e.py --namespace trial --call-only --fan <FAN> \\
+  python composite/scripts/e2e.py --namespace trial --partner bank-a --dry-run   # look only: GETs and SELECTs
+  python composite/scripts/e2e.py --namespace trial --partner bank-a             # set up (asks first), then call
+  python composite/scripts/e2e.py --namespace trial --partner bank-a --call-only --fan <FAN> \\
          --crop-year 2018 --season SEASON_MEHER --emit-curl --emit-postman loan-profile.postman.json
+
+--partner is required: it must be one of the use case's allowed_partners
+(loan-profile allows bank-a). The script registers a TEST key for it in PM.
 
 Steps
   1. Discover   the composite, Partner Management (PM), Consent Manager (CM), Keycloak and
@@ -1288,7 +1291,9 @@ def main(argv=None) -> int:
     p.add_argument("--emit-postman", metavar="FILE", help="write a Postman collection with a pre-signed request")
     p.add_argument("--out-dir", help="where to save the response JSON (default composite/scripts/out/, git-ignored)")
     p.add_argument("--print", action="store_true", help="also print the response JSON to stdout")
-    p.add_argument("--partner", default="e2e-bank", help="test partner ID, the DCI sender_id (default e2e-bank)")
+    p.add_argument("--partner", required=True,
+                   help="REQUIRED. Test partner ID (DCI sender_id); must be in the use case's allowed_partners, "
+                        "e.g. bank-a for loan-profile. A TEST key for it is registered in PM")
     p.add_argument("--purpose", help="consent purpose (default: the use case's purpose)")
     p.add_argument("--state-dir", help="keys and state (default ~/.agri-composite-e2e/<namespace>)")
     p.add_argument("--new-keys", action="store_true", help="generate new test keys (new kids) instead of reusing")

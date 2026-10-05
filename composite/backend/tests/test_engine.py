@@ -283,10 +283,10 @@ async def test_optional_source_unavailable_gives_partial_response(h):
     srcs = body["message"]["sources"]
     assert srcs["crop_seasons"]["status"] == "unavailable"
     assert srcs["season_summaries"]["status"] == "ok"
-    # retries: 1 → two attempts
+    # retries: 0 → one attempt (a slow registry search is not retried)
     seasons_calls = [c for c in h.registries.calls_to(CSR_URL)
                      if c["message"]["search_request"][0]["search_criteria"]["reg_record_type"].endswith("CropSeason")]
-    assert len(seasons_calls) == 2
+    assert len(seasons_calls) == 1
     assert body["message"]["data"]["crops"]["total_area_sown_ha"] == 0
 
 

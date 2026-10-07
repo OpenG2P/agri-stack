@@ -9,7 +9,7 @@
 # subject itself when the partner sends a FARMER_ID).
 #
 # Consent (one consent, a grant per registry) names each registry's data scopes:
-# scope IDs <registry>.<name> from the registry's catalogue (GET /partner/data_scopes).
+# scope IDs <registry>.<name> from the registry's catalogue (signed POST /partner/data_scopes).
 # The Farmer Registry grant must include farmer-registry.farmer_identifiers: the
 # farmer ID the crop sources query by is read from it. The partner kit grants:
 #   farmer-registry:    farmer_identifiers, personal_details, household_location,

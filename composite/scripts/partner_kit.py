@@ -38,7 +38,7 @@ from jwt import PyJWS
 DEFAULT_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kit-out")
 
 # Data scopes per registry for loan-profile: scope IDs (<registry>.<name>) from
-# each registry's scope catalogue (GET /partner/data_scopes on the registry).
+# each registry's scope catalogue (signed POST /partner/data_scopes on the registry).
 # The Farmer Registry grant must include farmer-registry.farmer_identifiers: the
 # farmer ID the Crop Sown Registry is queried by is read from it.
 GRANTS = {

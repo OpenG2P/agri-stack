@@ -57,6 +57,30 @@ questions:
   label: Crop Sown Registry Search URL
   group: Integration
 
+# ------------------------ Agri Stack exchange ------------------------
+- variable: composite.consent.mode
+  description: "passthrough (default): the partner's consent goes to each registry unchanged. exchange: validated at the exchange Consent Manager, and each registry gets its own consent receipt (Agri Stack exchange install)."
+  type: enum
+  options:
+    - passthrough
+    - exchange
+  default: passthrough
+  label: Consent Mode
+  group: Agri Stack exchange
+- variable: composite.consent.exchangeCmUrl
+  description: Exchange Consent Manager partner-api base URL (in-cluster), e.g. http://commons-services-consent-manager-partner-api
+  type: string
+  label: Exchange Consent Manager URL
+  group: Agri Stack exchange
+  show_if: composite.consent.mode=exchange
+- variable: composite.consent.exchangeCmTimeoutSeconds
+  description: Timeout for the exchange Consent Manager call (seconds)
+  type: int
+  default: 5
+  label: Exchange Consent Manager Timeout
+  group: Agri Stack exchange
+  show_if: composite.consent.mode=exchange
+
 # ---------------------------- Signing key ---------------------------
 - variable: composite.signingKey.secretName
   description: "Secret holding the composite's signing key: keys composite.p12 (file), password, and optionally kid and algorithm. Create it before installing (Storage → Secrets, or kubectl create secret generic)."

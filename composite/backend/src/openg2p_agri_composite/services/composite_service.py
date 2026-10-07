@@ -49,6 +49,9 @@ class CompositeService(BaseService):
             fetch_timeout=_config.partner_key_fetch_timeout_seconds,
             pm_transport=pm_transport,
         )
+        if _config.consent_mode == "exchange" and not _config.consent_exchange_cm_url:
+            _logger.error("Consent mode is exchange but AGRI_COMPOSITE_CONSENT_EXCHANGE_CM_URL is empty; "
+                          "every query that needs consent will fail")
         self.audit = AuditEmitter(
             _config.audit_manager_url, self.http_client, timeout=_config.audit_timeout_seconds, source=_config.audit_source
         )
@@ -59,6 +62,9 @@ class CompositeService(BaseService):
                 default_source_timeout_ms=_config.default_source_timeout_ms,
                 default_overall_timeout_ms=_config.default_overall_timeout_ms,
                 registries=registries,
+                consent_mode=_config.consent_mode,
+                exchange_cm_url=_config.consent_exchange_cm_url,
+                exchange_cm_timeout_seconds=_config.consent_exchange_cm_timeout_seconds,
             ),
             self.registry,
             self.crypto,

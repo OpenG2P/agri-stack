@@ -111,6 +111,21 @@ composite:
       url: http://csr-partner-api/dci/registry/sync/search
       partnerId: ""
 
+  # ── Consent mode ─────────────────────────────────────────────────────────
+  # passthrough (default): the partner's consent JWS goes to each registry
+  # unchanged; each registry validates it with its own Consent Manager.
+  # exchange (Agri Stack exchange install): the composite first validates the
+  # partner's consent at the exchange Consent Manager, which issues one signed
+  # consent receipt per registry; each registry gets its own receipt instead.
+  # The composite's partner ID must be a receipt presenter at that CM, and each
+  # department CM must trust the exchange CM as a receipt issuer.
+  consent:
+    mode: passthrough
+    # Exchange Consent Manager partner-api base URL (/consent/v1/validate is
+    # appended). Used only when mode is exchange.
+    exchangeCmUrl: ""
+    exchangeCmTimeoutSeconds: 5
+
   # ── Use cases: name → YAML (one use case per entry) ─────────────────────
   # Edit in Rancher's "Edit YAML" values view. Rendered into a ConfigMap
   # mounted at useCasesMountPath; pods reload changed files every
@@ -284,6 +299,9 @@ composite:
     AGRI_COMPOSITE_USE_CASES_RELOAD_SECONDS: '{{ .Values.useCasesReloadSeconds }}'
     AGRI_COMPOSITE_SIGNING_P12_PATH: '{{ .Values.signingKey.mountPath }}/{{ .Values.signingKey.p12Key }}'
     AGRI_COMPOSITE_LOGGING_LEVEL: INFO
+    AGRI_COMPOSITE_CONSENT_MODE: '{{ .Values.consent.mode | default "passthrough" }}'
+    AGRI_COMPOSITE_CONSENT_EXCHANGE_CM_URL: '{{ tpl (.Values.consent.exchangeCmUrl | default "") $ }}'
+    AGRI_COMPOSITE_CONSENT_EXCHANGE_CM_TIMEOUT_SECONDS: '{{ .Values.consent.exchangeCmTimeoutSeconds | default 5 }}'
     # Partner request freshness window (header.message_ts), seconds.
     AGRI_COMPOSITE_REQUEST_MAX_SKEW_SECONDS: "300"
     # Outbound connection pool per worker.

@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Literal
 
 from openg2p_fastapi_common.config import Settings as BaseSettings
 from pydantic import BaseModel
@@ -76,6 +76,18 @@ class Settings(BaseSettings):
     http_keepalive_expiry_seconds: float = 30.0
     default_source_timeout_ms: int = 5000
     default_overall_timeout_ms: int = 10000
+
+    # ── Consent mode ──────────────────────────────────────────────────────────
+    # passthrough (default): the partner's consent JWS goes to each registry
+    # unchanged; each registry validates it with its own Consent Manager.
+    # exchange: the composite first validates the partner's consent at the
+    # exchange Consent Manager (consent_exchange_cm_url) asking for consent
+    # receipts, and sends each registry its own controller's receipt instead.
+    consent_mode: Literal["passthrough", "exchange"] = "passthrough"
+    # Exchange Consent Manager partner-api base URL (…/consent/v1/validate is
+    # appended), e.g. http://commons-services-consent-manager-partner-api.
+    consent_exchange_cm_url: str = ""
+    consent_exchange_cm_timeout_seconds: float = 5.0
 
     # ── Audit Manager (CloudEvents, fire-and-forget). Empty URL → off. ────────
     audit_manager_url: str = ""

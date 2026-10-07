@@ -2,7 +2,8 @@
 
 Partner → composite: a signed envelope ``{signature, header, message}``.
 Steps: verify the partner's signature (PM key, fail closed) → resolve the use
-case → allowed partner → validate input → rate limit → consent checks → run the
+case → allowed partner → validate input → rate limit → consent checks (in
+exchange mode, then consent receipts from the exchange Consent Manager) → run the
 sources as a DAG → partial-response rule → mapping and derived values → sign
 the response. Nothing is stored; logs carry the request ID, use case, partner,
 statuses and timings only.
@@ -64,6 +65,12 @@ class EngineSettings:
     default_overall_timeout_ms: int = 10000
     # controller id -> {"url", "partner_id", "receiver_id"}
     registries: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # passthrough: the partner's consent goes to each registry unchanged.
+    # exchange: validated at the exchange Consent Manager first; each registry
+    # gets its own controller's consent receipt instead.
+    consent_mode: str = "passthrough"
+    exchange_cm_url: str = ""
+    exchange_cm_timeout_seconds: float = 5.0
 
 
 class CompositeEngine:
@@ -101,9 +108,13 @@ class CompositeEngine:
             parameters = self._validate_parameters(compiled, message.get("parameters"))
             self._rate_limit(compiled, partner_id)
             granted = await self._check_consent(compiled, message, subject, partner_id)
+            receipts, preset = None, None
+            if self.settings.consent_mode == "exchange":
+                receipts, preset = await self._exchange_consent(compiled, message, subject, granted, request_id)
             self._emit(compiled, "request", request_id, partner_id, "success")
             statuses = await self.run_sources(
-                compiled, subject, parameters, message.get("consent_jws"), partner_id, request_id, granted
+                compiled, subject, parameters, message.get("consent_jws"), partner_id, request_id, granted,
+                receipts=receipts, preset=preset,
             )
             self._apply_partial_rule(compiled, statuses)
             data = self.assemble(compiled, subject, parameters, statuses)
@@ -256,6 +267,81 @@ class CompositeEngine:
         except ConsentError as e:
             raise QueryError(403, e.code, e.message) from None
 
+    async def _exchange_consent(
+        self, compiled: CompiledUseCase, message, subject, granted: Dict[str, bool], request_id: str
+    ) -> Tuple[Dict[str, str], Dict[str, SourceResult]]:
+        """Exchange mode: the partner's consent → one consent receipt per registry.
+
+        Calls the exchange Consent Manager ``/validate`` with the partner's
+        consent and ``issue_receipts: true`` (the composite is the caller, as a
+        registry is towards its own CM: ``partner_id`` is the composite's
+        partner ID, a configured receipt presenter there). Deny → the request
+        is denied. Returns ({controller: receipt JWS}, {source_id: preset
+        result}) — an optional source whose controller got no receipt is
+        unavailable; a mandatory one fails the request.
+        """
+        if not compiled.spec.consent.required:
+            # No consent to exchange: registries get no consent (the partner's
+            # own consent is not presented to a department registry).
+            return {}, {}
+        base = (self.settings.exchange_cm_url or "").rstrip("/")
+        if not base:
+            raise QueryError(503, "consent_exchange_unavailable",
+                             "consent exchange is on but no exchange Consent Manager URL is configured")
+        body = {
+            "consent_jws": message["consent_jws"],
+            "partner_id": self.settings.composite_partner_id,
+            "issue_receipts": True,
+            "request_context": {"subject_id": subject},
+        }
+        try:
+            response = await self._client().post(
+                f"{base}/consent/v1/validate", json=body, timeout=self.settings.exchange_cm_timeout_seconds
+            )
+        except httpx.TransportError as e:
+            kind = "timed out" if isinstance(e, httpx.TimeoutException) else "is unreachable"
+            _logger.error("request_id=%s: exchange Consent Manager %s: %s", request_id, kind, e)
+            raise QueryError(503, "consent_exchange_unavailable", f"the exchange Consent Manager {kind}") from None
+        if response.status_code != 200:
+            _logger.error("request_id=%s: exchange Consent Manager returned HTTP %s", request_id, response.status_code)
+            if response.status_code in (408, 429) or response.status_code >= 500:
+                raise QueryError(503, "consent_exchange_unavailable",
+                                 f"the exchange Consent Manager is unavailable (HTTP {response.status_code})")
+            raise QueryError(502, "consent_exchange_error",
+                             f"the exchange Consent Manager rejected the request (HTTP {response.status_code})")
+        try:
+            decision = response.json()
+        except ValueError:
+            decision = None
+        if not isinstance(decision, dict):
+            raise QueryError(502, "consent_exchange_error", "the exchange Consent Manager answer is not a JSON object")
+        if decision.get("decision") != "permit":
+            reason = decision.get("reason_code") or "denied"
+            detail = decision.get("detail")
+            raise QueryError(403, "consent_denied",
+                             f"the exchange Consent Manager denied the consent ({reason}{': ' + str(detail) if detail else ''})")
+        raw = decision.get("receipts")
+        receipts = {
+            str(c): r for c, r in (raw.items() if isinstance(raw, dict) else []) if isinstance(r, str) and r
+        }
+        preset: Dict[str, SourceResult] = {}
+        missing_mandatory = []
+        for src in compiled.spec.sources:
+            if not granted.get(src.id, True) or src.controller in receipts:
+                continue
+            if src.requirement == "mandatory":
+                missing_mandatory.append(src.controller)
+            else:
+                preset[src.id] = SourceResult(
+                    dci.UNAVAILABLE,
+                    detail=f"not called: the exchange Consent Manager issued no consent receipt for {src.controller}",
+                )
+        if missing_mandatory:
+            raise QueryError(403, "consent_receipt_missing",
+                             f"the exchange Consent Manager issued no consent receipt for {sorted(set(missing_mandatory))}, "
+                             "needed by this use case")
+        return receipts, preset
+
     # ── running the sources ──────────────────────────────────────────────────
 
     async def run_sources(
@@ -267,12 +353,19 @@ class CompositeEngine:
         partner_id: str,
         request_id: str,
         granted: Optional[Dict[str, bool]] = None,
+        receipts: Optional[Dict[str, str]] = None,
+        preset: Optional[Dict[str, SourceResult]] = None,
     ) -> Dict[str, SourceResult]:
+        """``receipts`` (exchange mode): {controller: receipt JWS} sent to each
+        registry instead of ``consent_jws``; ``preset``: results decided before
+        any call (e.g. an optional source with no receipt)."""
         spec = compiled.spec
         results: Dict[str, SourceResult] = {}
         for src in spec.sources:
             if granted is not None and not granted.get(src.id, True):
                 results[src.id] = SourceResult(dci.DENIED, detail=f"the consent has no grant for {src.controller}")
+            elif preset and src.id in preset:
+                results[src.id] = preset[src.id]
 
         async def run_levels():
             for level in compiled.levels:
@@ -290,7 +383,11 @@ class CompositeEngine:
                     todo.append(sid)
                 if todo:
                     await asyncio.gather(*(
-                        self._call_source(compiled, sid, subject, parameters, consent_jws, partner_id, request_id, results)
+                        self._call_source(
+                            compiled, sid, subject, parameters,
+                            consent_jws if receipts is None else receipts.get(compiled.sources[sid].controller),
+                            partner_id, request_id, results,
+                        )
                         for sid in todo
                     ))
 

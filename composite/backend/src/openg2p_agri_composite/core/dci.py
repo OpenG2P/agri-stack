@@ -52,7 +52,8 @@ def build_search(
         **rendered,
     }
     if consent_jws:
-        # Forwarded unchanged; each registry validates its own grant with CM.
+        # The partner's consent unchanged (passthrough) or this registry's consent
+        # receipt (exchange mode); each registry validates it with its own CM.
         criteria["authorize"] = {"consent_jws": consent_jws}
     ts = now_ts()
     return {

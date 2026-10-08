@@ -1,0 +1,19 @@
+# Agri Exchange override for openg2p-agri-composite (release `agri-composite`).
+# Consent mode "exchange": the composite validates each partner consent at the
+# exchange Consent Manager (commons-services), which issues one signed receipt
+# per department registry; each registry gets its own receipt.
+{{- if .Values.baseDomain }}
+global:
+  compositeHostname: {{ printf "agri-composite.%s" .Values.baseDomain | quote }}
+{{- end }}
+
+composite:
+  # Department registries (data controller ID → partner DCI sync search URL).
+  registries:
+{{- range $name, $url := .Values.registries }}
+    {{ $name }}:
+      url: {{ $url | quote }}
+{{- end }}
+  consent:
+    mode: exchange
+    exchangeCmUrl: {{ .Values.exchangeCmUrl | default "http://commons-services-cm-partner-api" | quote }}

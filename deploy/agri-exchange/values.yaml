@@ -1,0 +1,38 @@
+# Agri Exchange — operator settings. These are the only knobs; everything else
+# is the commons / composite chart default plus the exchange overrides in
+# overrides/*.gotmpl.
+
+# Namespace all three releases go into.
+namespace: agrix
+
+# Hostnames are <service>.<baseDomain>. Empty: <namespace>.openg2p.org (the
+# charts' own default).
+baseDomain: ""
+
+# Consent Manager receipt signing key (PKCS#12) — REQUIRED, there is no demo
+# key. Create the Secret in the namespace first, e.g.
+#   kubectl -n agrix create secret generic agrix-cm-signing \
+#     --from-file=cm_signing.p12=./cm_signing.p12 --from-literal=password='<p12 password>'
+# kid is the label advertised in the CM JWKS and receipts; change it on every
+# key rotation.
+cmSigningKey:
+  secretName: ""
+  p12Key: cm_signing.p12
+  passwordKey: password
+  kid: agrix-cm-2026-01
+
+# Department registries the composite queries: registry (data controller) ID →
+# its partner DCI sync search URL.
+registries:
+  farmer-registry: https://partner-fr.trial.openg2p.org/dci/registry/sync/search
+  crop-sown-registry: https://partner-csr.dept1.openg2p.org/dci/registry/sync/search
+
+# Exchange Consent Manager partner API base URL the composite validates
+# consents at. Empty: the in-namespace CM partner API
+# (http://commons-services-cm-partner-api).
+exchangeCmUrl: ""
+
+# Optional components (all off for the exchange).
+notifications: false     # Novu (commons-base)
+publicCatalogue: false   # Master Data public catalogue (/public routes)
+kafkaUi: false           # Kafka UI (commons-base)

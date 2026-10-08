@@ -1,0 +1,99 @@
+# Agri Exchange override for openg2p-commons-services (release `commons-services`).
+#
+# The exchange is where partners (banks, …) onboard and farmers consent. It
+# runs Partner Management, the Consent Manager in its EXCHANGE role (issues a
+# signed consent receipt per department registry), master data (catalogue),
+# Audit Manager, IAM with its admin login, and keycloak-init — plus the Agri
+# Stack composite (release agri-composite, consent mode "exchange").
+#
+# Department installs (e.g. `trial` with the Farmer Registry, `csr` with the
+# Crop Sown Registry) do NOT use this override: they keep the commons default,
+# and their Consent Manager trusts this one as a receipt issuer.
+#
+# Turned off here: services only a registry install needs — keymanager,
+# artifactory, eSignet, mock identity, Inji Certify / Verify, ODK Central,
+# Superset, the staff portal UI, WebSub, and AWE (the CM's AWE approval of
+# policy widenings is off; turn AWE back on with
+# openg2p-consent-manager.global.aweEnabled=true).
+{{- $cm := .Values.cmSigningKey }}
+{{- if .Values.baseDomain }}
+global:
+  baseDomain: {{ .Values.baseDomain | quote }}
+{{- end }}
+
+# ── Kept ─────────────────────────────────────────────────────────────────────
+masterData:
+  enabled: true
+  masterDataAPI:
+    catalogue:
+      public:
+        # values.yaml: publicCatalogue
+        enabled: {{ .Values.publicCatalogue }}
+        istio:
+          enabled: {{ .Values.publicCatalogue }}
+          host: {{ printf "catalogue.%s" (.Values.baseDomain | default (printf "%s.openg2p.org" .Values.namespace)) | quote }}
+openg2p-iam-service:
+  enabled: true
+openg2p-audit-manager:
+  enabled: true
+partner-management:
+  enabled: true
+keycloak-init:
+  enabled: true
+
+# ── Registry-only services: off ─────────────────────────────────────────────
+keymanager:
+  enabled: false
+artifactory:
+  enabled: false
+esignet:
+  enabled: false
+mock-identity-system:
+  enabled: false
+openg2p-inji-certify:
+  enabled: false
+openg2p-inji-verify:
+  enabled: false
+odk-central:
+  enabled: false
+superset:
+  enabled: false
+openg2p-staff-portal-ui:
+  enabled: false
+websub:
+  enabled: false
+# Shared AWE: only the CM's (optional) policy-widening approval would use it here.
+openg2p-awe:
+  enabled: false
+
+# ── Consent Manager: exchange role ──────────────────────────────────────────
+openg2p-consent-manager:
+  enabled: true
+  global:
+    aweEnabled: false
+    # Label of the receipt signing key (JWKS + receipts); change on rotation.
+    consentSigningKid: {{ $cm.kid | quote }}
+    # Consent Manager chart: global.agriStackExchange (CM env
+    # CONSENT_MANAGER_RECEIPT_ISSUER / _RECEIPT_PRESENTERS / _RECEIPT_TTL_SECONDS
+    # / _TRUSTED_RECEIPT_ISSUERS).
+    agriStackExchange:
+      enabled: true
+      # Issuer ID put in every consent receipt (`iss`). Department CMs list it,
+      # with this CM's JWKS URL, in their trusted receipt issuers.
+      issuer: agri-stack-exchange-cm
+      # Callers allowed to ask for receipts (issue_receipts=true on /validate)
+      # and to present them to department registries: the composite's partner ID.
+      receiptPresenters:
+        - agri-composite
+      # Receipt lifetime (seconds), capped by the consent's own expiry.
+      receiptTtlSeconds: 900
+      # Department role only — the exchange trusts no other issuer.
+      trustedReceiptIssuers: []
+  consentManagerApi:
+    # Receipt signing key: the operator's own .p12 Secret (no demo key).
+    signingKey:
+      mode: existing
+      secretName: {{ required "values.yaml: cmSigningKey.secretName is required (the Secret holding the CM signing .p12)" $cm.secretName | quote }}
+      secretKey: {{ $cm.p12Key | quote }}
+      passwordSecretName: {{ $cm.secretName | quote }}
+      passwordSecretKey: {{ $cm.passwordKey | quote }}

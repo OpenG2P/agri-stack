@@ -1,0 +1,14 @@
+# Agri Exchange override for openg2p-commons-base (release `commons`).
+# Everything not listed here is the commons default.
+{{- if .Values.baseDomain }}
+global:
+  baseDomain: {{ .Values.baseDomain | quote }}
+{{- end }}
+
+# Notifications (Novu): {{ if .Values.notifications }}on{{ else }}off{{ end }} (values.yaml: notifications).
+novu:
+  enabled: {{ .Values.notifications }}
+
+# Kafka UI: {{ if .Values.kafkaUi }}on{{ else }}off{{ end }} (values.yaml: kafkaUi).
+kafkaUi:
+  enabled: {{ .Values.kafkaUi }}

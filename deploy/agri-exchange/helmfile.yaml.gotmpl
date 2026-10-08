@@ -1,0 +1,65 @@
+# Agri Exchange (Agri X) install bundle.
+#
+#   helmfile -e agrix apply
+#
+# Installs, in order, into one namespace: commons (openg2p-commons-base),
+# commons-services (openg2p-commons-services) and agri-composite
+# (openg2p-agri-composite). The commons charts are used unchanged; everything
+# exchange-specific is in the override files next to this one. The release
+# names commons / commons-services are required by the commons charts.
+# Chart versions: versions.yaml. Operator settings: values.yaml.
+
+environments:
+  default:
+    values:
+      - versions.yaml
+      - values.yaml
+  agrix:
+    values:
+      - versions.yaml
+      - values.yaml
+
+---
+repositories:
+  - name: openg2p
+    url: https://openg2p.github.io/openg2p-helm
+
+helmDefaults:
+  wait: true
+  waitForJobs: true
+  createNamespace: true
+
+releases:
+  - name: commons
+    namespace: {{ .Values.namespace }}
+    chart: openg2p/openg2p-commons-base
+    version: {{ .Values.charts.commonsBase }}
+    timeout: 1800
+    labels:
+      bundle: agri-exchange
+    values:
+      - commons-base.yaml.gotmpl
+
+  - name: commons-services
+    namespace: {{ .Values.namespace }}
+    chart: openg2p/openg2p-commons-services
+    version: {{ .Values.charts.commonsServices }}
+    timeout: 1800
+    needs:
+      - {{ .Values.namespace }}/commons
+    labels:
+      bundle: agri-exchange
+    values:
+      - commons-services.yaml.gotmpl
+
+  - name: agri-composite
+    namespace: {{ .Values.namespace }}
+    chart: openg2p/openg2p-agri-composite
+    version: {{ .Values.charts.agriComposite }}
+    timeout: 900
+    needs:
+      - {{ .Values.namespace }}/commons-services
+    labels:
+      bundle: agri-exchange
+    values:
+      - agri-composite.yaml.gotmpl

@@ -21,7 +21,8 @@ Steps
   4. Access      the partner's binding and policy per registry in the Consent Manager (CM).
                    with CM admin credentials: create them (if the CM has AWE approval of
                    policies turned on — off by default — the approval is waited for);
-                   without them: print what a CM admin must set up, and wait for Enter.
+                   without them: not checked (a partner cannot see the CM's bindings either);
+                   if the query is refused for consent, the setup a CM admin needs is printed.
   5. Consent     a consent for the farmer with a grant per registry, signed by the partner. The
                  farmer is --fan, or by default the sample farmer FR-0007 (sample person
                  ETH-IND-0007 of the country pack in openg2p-data, with land and crop
@@ -269,17 +270,11 @@ class Run:
         needed = {c: kit.policy_payload(c, self.purpose) for c in self.controllers}
         secret = os.environ.get("CM_ADMIN_CLIENT_SECRET")
         if not secret:
-            info("no CM admin credentials (CM_ADMIN_CLIENT_SECRET): a CM admin sets up, in the CM portal "
-                 f"{self.u.cm_portal}:")
-            for c, p in needed.items():
-                info(f"  binding {self.a.partner} → {c} (PM partner {self.ref}), active, with a policy allowing "
-                     f"scopes {p['allowed_data_scopes']}, purpose {p['allowed_purposes']}, ID types "
-                     f"{p['allowed_subject_id_types']}, signing {p['allowed_signing_algs']}")
-            if sys.stdin.isatty() and not self.a.no_prompt:
-                print("   Press Enter when this is in place (or if it already is): ", end="", file=sys.stderr, flush=True)
-                sys.stdin.readline()
-            else:
-                info("not waiting (no terminal or --no-prompt); a missing policy shows up as a denied source")
+            # Like a partner, the script cannot see the CM's bindings without admin rights: it goes on
+            # to the query, and only if that is refused for consent does it print the setup needed.
+            info("no CM admin credentials (CM_ADMIN_CLIENT_SECRET): not checked; the query shows whether "
+                 "the CM grants access")
+            self.cm_unchecked = needed
             return
         token = self._token(self.a.cm_client_id, secret, "CM")
         h = {"Authorization": f"Bearer {token}"}
@@ -372,6 +367,16 @@ class Run:
             return f"not checked (PM serves no kid {kid} for {self.a.composite_id})"
         return kit.verify_response_with_key(body, load_public(key["public_key"])) + f" (PM key {kid})"
 
+    def _cm_setup_hint(self):
+        needed = getattr(self, "cm_unchecked", None)
+        if not needed:
+            return
+        info(f"if the CM has not granted {self.a.partner} access, a CM admin sets up, in {self.u.cm_portal}:")
+        for c, p in needed.items():
+            info(f"  binding {self.a.partner} → {c} (PM partner {self.ref}), active, with a policy allowing "
+                 f"scopes {p['allowed_data_scopes']}, purpose {p['allowed_purposes']}, ID types "
+                 f"{p['allowed_subject_id_types']}, signing {p['allowed_signing_algs']}")
+
     def summary(self, status, body) -> int:
         step("6. Result")
         sig = self._verify(body)
@@ -392,10 +397,14 @@ class Run:
         if status != 200 or header.get("status") != "succ":
             err = msg.get("error") or {}
             warn(f"FAILED: {err.get('code')}: {err.get('message')}")
+            if str(err.get("code") or "").startswith("consent"):
+                self._cm_setup_hint()
             return EXIT_CALL_FAILED
         bad = {sid: s for sid, s in sources.items() if s.get("status") not in ("ok", "no_record")}
         if bad:
             warn("FAILED: " + "; ".join(f"{sid} {s.get('status')}" for sid, s in bad.items()))
+            if any(s.get("status") == "denied" for s in bad.values()):
+                self._cm_setup_hint()
             return EXIT_CALL_FAILED
         info("OK")
         return EXIT_OK
@@ -420,7 +429,6 @@ def main(argv=None) -> int:
     p.add_argument("--cm-client-id", default="consent-manager", help="CM admin client (staff realm)")
     p.add_argument("--wait", type=int, default=1800, help="seconds to wait for a manual approval (default 1800)")
     p.add_argument("--poll", type=int, default=10, help="seconds between checks while waiting")
-    p.add_argument("--no-prompt", action="store_true", help="never wait for Enter")
     p.add_argument("--new-key", action="store_true", help="generate a new partner key (new kid)")
     p.add_argument("--state-dir", help="partner keys (default ~/.agri-partner-test/<base domain>)")
     p.add_argument("--out-dir", default=OUT_DIR, help="where the response JSON is saved (git-ignored)")

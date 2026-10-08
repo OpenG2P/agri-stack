@@ -8,6 +8,7 @@ name sit next to the use-case files (a ConfigMap has no subdirectories).
 
 import logging
 import os
+import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -53,6 +54,8 @@ class CompiledUseCase:
     mapping: List[Tuple[str, JsonPath]]
     derived: List[Tuple[str, tuple]]
     sources: Dict[str, Any] = field(default_factory=dict)  # id -> SourceSpec
+    # output field -> the sources it is built from (directly, or through $.data fields)
+    field_sources: Dict[str, frozenset] = field(default_factory=dict)
 
     @property
     def ref(self) -> str:
@@ -203,7 +206,26 @@ def compile_use_case(raw: Dict[str, Any], path: str, known_controllers: Optional
         mapping=mapping,
         derived=derived,
         sources={s.id: s for s in spec.sources},
+        field_sources=field_sources(spec.response.mapping, spec.response.derived),
     )
+
+
+_SOURCE_REF = re.compile(r"\$\.sources\.([A-Za-z0-9_-]+)")
+_DATA_REF = re.compile(r"\$\.data\.([A-Za-z0-9_.-]+)")
+
+
+def field_sources(mapping: Dict[str, str], derived: Dict[str, str]) -> Dict[str, frozenset]:
+    """Which sources each output field is built from: its own $.sources.<id> references, plus those
+    of the $.data fields it reads (mapping first, then derived in order, as they are evaluated)."""
+    out: Dict[str, frozenset] = {}
+    for name, text in list(mapping.items()) + list(derived.items()):
+        refs = set(_SOURCE_REF.findall(text or ""))
+        for dep in _DATA_REF.findall(text or ""):
+            for known, srcs in out.items():
+                if dep == known or dep.startswith(known + ".") or known.startswith(dep + "."):
+                    refs |= srcs
+        out[name] = frozenset(refs)
+    return out
 
 
 def parse_ref(ref: str) -> Tuple[str, Optional[int]]:

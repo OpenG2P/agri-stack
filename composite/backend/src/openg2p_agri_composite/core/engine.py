@@ -523,8 +523,19 @@ class CompositeEngine:
             "parameters": parameters,
             "sources": {sid: {"status": r.status, "records": r.records} for sid, r in statuses.items()},
         }
+        # A field built from a source that failed (denied, unavailable, error) is null, so that it
+        # never reads as "the registry has nothing" — that is [] / 0 from a no_record answer.
+        # message.sources says why.
+        failed = {sid for sid, r in statuses.items() if r.status in dci.FAILED}
+
+        def from_failed(out: str) -> bool:
+            return bool(failed & compiled.field_sources.get(out, frozenset()))
+
         data: Dict[str, Any] = {}
         for out, path in compiled.mapping:
+            if from_failed(out):
+                set_path(data, out, None)
+                continue
             try:
                 set_path(data, out, path.value(ctx))
             except Exception:
@@ -532,6 +543,9 @@ class CompositeEngine:
                 set_path(data, out, None)
         ctx["data"] = data
         for out, node in compiled.derived:
+            if from_failed(out):
+                set_path(data, out, None)
+                continue
             try:
                 set_path(data, out, evaluate(node, ctx))
             except Exception:

@@ -259,7 +259,10 @@ async def test_consent_without_grant_for_optional_source(h):
     assert srcs["farmer"]["status"] == "ok"
     assert srcs["season_summaries"]["status"] == "denied" and srcs["crop_seasons"]["status"] == "denied"
     assert h.registries.calls_to(CSR_URL) == []
-    assert body["message"]["data"]["crops"]["seasons"] == []
+    # fields from a denied source are null, not "nothing found"
+    crops = body["message"]["data"]["crops"]
+    assert crops == {"seasons": None, "season_summaries": None, "total_area_sown_ha": None}
+    assert body["message"]["data"]["land"]["parcel_count"] is not None
 
 
 async def test_consent_without_grant_for_mandatory_source(h):
@@ -287,7 +290,20 @@ async def test_optional_source_unavailable_gives_partial_response(h):
     seasons_calls = [c for c in h.registries.calls_to(CSR_URL)
                      if c["message"]["search_request"][0]["search_criteria"]["reg_record_type"].endswith("CropSeason")]
     assert len(seasons_calls) == 1
-    assert body["message"]["data"]["crops"]["total_area_sown_ha"] == 0
+    crops = body["message"]["data"]["crops"]
+    # built from the unavailable source: null; season summaries answered, so they stay
+    assert crops["seasons"] is None and crops["total_area_sown_ha"] is None
+    assert crops["season_summaries"] is not None
+
+
+async def test_no_record_source_gives_empty_values_not_null(h):
+    h.registries.handlers[(CSR_URL, "spdci-extensions-agri:CropSeason")] = (
+        lambda body: httpx.Response(200, json=dci_response(body, records=[])))
+    status, body = await h.query(h.envelope())
+    assert status == 200, body
+    assert body["message"]["sources"]["crop_seasons"]["status"] == "no_record"
+    crops = body["message"]["data"]["crops"]
+    assert crops["seasons"] == [] and crops["total_area_sown_ha"] == 0
 
 
 async def test_partial_response_denied_fails_request(h, use_cases_dir):

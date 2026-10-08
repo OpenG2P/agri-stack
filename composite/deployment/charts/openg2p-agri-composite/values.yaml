@@ -100,15 +100,17 @@ composite:
     mountPath: /app/secrets
 
   # ── Registries (data controllers): DCI sync search URL per controller ID ──
+  # Full URLs, set per install: a registry may run in another department's
+  # namespace or cluster. An empty URL makes that source fail.
   # Partner Management has no registry endpoints yet, so they are set here.
   # partnerId (optional): the registry's PM partner ID — when set, the
   # registry's response signature is verified against its PM key.
   registries:
     farmer-registry:
-      url: http://fr-partner-api/dci/registry/sync/search
+      url: ""
       partnerId: ""
     crop-sown-registry:
-      url: http://csr-partner-api/dci/registry/sync/search
+      url: ""
       partnerId: ""
 
   # ── Consent mode ─────────────────────────────────────────────────────────

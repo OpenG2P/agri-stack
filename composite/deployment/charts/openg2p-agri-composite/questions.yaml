@@ -45,15 +45,15 @@ questions:
   label: Audit Manager URL
   group: Integration
 - variable: composite.registries.farmer-registry.url
-  description: Farmer Registry DCI sync search URL (in-cluster service of its partner API)
+  description: Farmer Registry partner API DCI sync search URL (full URL; the registry may be in another department or cluster)
   type: string
-  default: http://fr-partner-api/dci/registry/sync/search
+  required: true
   label: Farmer Registry Search URL
   group: Integration
 - variable: composite.registries.crop-sown-registry.url
-  description: Crop Sown Registry DCI sync search URL (in-cluster service of its partner API)
+  description: Crop Sown Registry partner API DCI sync search URL (full URL; the registry may be in another department or cluster)
   type: string
-  default: http://csr-partner-api/dci/registry/sync/search
+  required: true
   label: Crop Sown Registry Search URL
   group: Integration
 
@@ -68,7 +68,7 @@ questions:
   label: Consent Mode
   group: Agri Stack exchange
 - variable: composite.consent.exchangeCmUrl
-  description: Exchange Consent Manager partner-api base URL (in-cluster), e.g. http://commons-services-consent-manager-partner-api
+  description: Exchange Consent Manager partner API base URL (/consent/v1/validate is appended)
   type: string
   label: Exchange Consent Manager URL
   group: Agri Stack exchange

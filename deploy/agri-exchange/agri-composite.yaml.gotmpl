@@ -5,7 +5,17 @@
 {{- if .Values.baseDomain }}
 global:
   compositeHostname: {{ printf "agri-composite.%s" .Values.baseDomain | quote }}
+  consoleHostname: {{ printf "agri-composite-console.%s" .Values.baseDomain | quote }}
+  staffIamHostname: {{ printf "staff-iam.%s" .Values.baseDomain | quote }}
+  consoleCookieDomain: {{ printf ".%s" .Values.baseDomain | quote }}
 {{- end }}
+
+# The staff console (on by default). Its IAM registration runs as a regular Job,
+# not a Helm hook (as commons does for Master Data): helmfile/Rancher installs
+# may skip hooks, and one failing hook stops the rest.
+console:
+  iamRegister:
+    runAsHook: false
 
 composite:
   # Department registries (data controller ID → partner DCI sync search URL).

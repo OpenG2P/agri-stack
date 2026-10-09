@@ -392,7 +392,7 @@ composite:
 #   - a Job creates the Keycloak client (keycloakInit) and another registers the
 #     console in IAM (iamRegister) so admins can grant its roles there.
 console:
-  enabled: false
+  enabled: true
 
   # ── IAM (staff login; same iam-core settings as Master Data's API) ────────
   iam:

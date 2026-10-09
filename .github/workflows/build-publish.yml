@@ -49,14 +49,21 @@ jobs:
            "pins": [
              {"arg": "FASTAPI_COMMON_REF",
               "repo": "https://github.com/openg2p/openg2p-fastapi-common",
-              "ref": "develop"}
-           ]}
+              "ref": "develop"},
+             {"arg": "IAM_CORE_REF",
+              "repo": "https://github.com/openg2p/iam",
+              "ref": "1.4.2"}
+           ]},
+          {"name": "agri-composite-ui",
+           "repo": "openg2p/openg2p-agri-composite-ui",
+           "dockerfile": "composite/docker/agri-composite-ui/Dockerfile",
+           "context": "composite"}
         ]
 
       chart-path: composite/deployment/charts/openg2p-agri-composite
 
-      # The sanity Job reuses the API image (.composite.image), so one path.
-      chart-image-paths: '[".composite.image.tag"]'
+      # The sanity Job reuses the API image (.composite.image); the console UI has its own.
+      chart-image-paths: '[".composite.image.tag", ".console.ui.image.tag"]'
 
     # ---- IDENTICAL BOILERPLATE ----
     secrets:

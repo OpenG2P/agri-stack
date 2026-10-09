@@ -87,7 +87,7 @@ questions:
 - variable: console.enabled
   description: "Deploy the staff console: the console UI, the API's admin API with IAM login, its database in the commons Postgres, its Keycloak client and its IAM application (roles AGRI_COMPOSITE_ADMIN / AGRI_COMPOSITE_VIEWER)."
   type: boolean
-  default: false
+  default: true
   label: Enable Console
   group: Console
 - variable: global.consoleHostname

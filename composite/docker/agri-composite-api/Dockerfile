@@ -7,8 +7,11 @@ FROM python:3.12-slim-bookworm
 # .github/workflows/build-publish.yml). The partner-mgmt crypto backend
 # (PartnerMgmtKeyStore) is on the framework's develop line, not in 1.2.0.
 ARG FASTAPI_COMMON_REF=develop
-# iam-core (the console's staff login), pinned to the IAM 1.4 line like Master Data.
-ARG IAM_CORE_REF=1.4.2
+# iam-core (the console's staff login). Its develop line, to match the framework's
+# develop above: the 1.4.x releases import openg2p_fastapi_common.crypto, which the
+# framework's develop moved to openg2p_fastapi_common.utils.crypto. CI resolves it
+# to a commit SHA.
+ARG IAM_CORE_REF=develop
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

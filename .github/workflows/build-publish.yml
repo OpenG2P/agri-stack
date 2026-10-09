@@ -52,7 +52,7 @@ jobs:
               "ref": "develop"},
              {"arg": "IAM_CORE_REF",
               "repo": "https://github.com/openg2p/iam",
-              "ref": "1.4.2"}
+              "ref": "develop"}
            ]},
           {"name": "agri-composite-ui",
            "repo": "openg2p/openg2p-agri-composite-ui",

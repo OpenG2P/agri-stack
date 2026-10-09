@@ -61,6 +61,9 @@ def test_sample_loads_and_describes():
         (lambda r: r["response"]["derived"].update({"farmer": "count($.a)"}), "both a value and a parent"),
         (lambda r: r["input"]["parameters"]["crop_year"].update(default="2019"), "must be an integer"),
         (lambda r: r["limits"].update(rate_per_partner="lots"), "rate_per_partner"),
+        (lambda r: r["response"]["mapping"].update(x="$['sources']['farmer'].records"), "dotted form"),
+        (lambda r: r["response"]["mapping"].update(x="$.sources[*].records"), "dotted form"),
+        (lambda r: r["response"]["derived"].update(y="count($..area_sown_ha)"), "dotted form"),
     ],
 )
 def test_validation_errors_are_clear(mutate, message):
@@ -207,7 +210,7 @@ def test_dag_levels():
 
 
 def test_helm_values_carry_the_sample_use_case():
-    values_path = os.path.join(USE_CASES, "..", "deployment", "charts", "openg2p-agri-composite", "values.yaml")
+    values_path = os.path.join(USE_CASES, "..", "charts", "openg2p-agri-composite", "values.yaml")
     with open(values_path) as fh:
         values = yaml.safe_load(fh)
     with open(os.path.join(USE_CASES, "loan-profile.yaml")) as fh:

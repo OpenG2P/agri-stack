@@ -11,6 +11,8 @@ import {
     type ReactNode,
 } from "react";
 
+import { useTranslations } from "next-intl";
+import { ErrorBox } from "@/components/ui";
 import { useAuth } from "@/context/Authcontext";
 
 interface RbacContextType {
@@ -28,9 +30,15 @@ export function RbacProvider({ children }: { children: ReactNode }) {
     const { isLoggedIn, handleUnauthorized } = useAuth();
     const [loading, setLoading] = useState(true);
     const [actionSet, setActionSet] = useState<Set<string>>(new Set());
+    /** Set when the permissions could not be read (not the same as "no permissions"). */
+    const [error, setError] = useState<string | null>(null);
+    const t = useTranslations();
 
-    /** Permissions of the user in this application (APPLICATION_MNEMONIC), or null after a 401. */
-    const fetchActions = useCallback(async (): Promise<Set<string> | null> => {
+    /**
+     * Permissions of the user in this application (APPLICATION_MNEMONIC), null after a 401, or
+     * `{ error }` when IAM could not be asked (so the UI shows an error, not "Access denied").
+     */
+    const fetchActions = useCallback(async (): Promise<Set<string> | { error: string } | null> => {
         if (!isLoggedIn) return new Set();
         try {
             const res = await fetch("/api/permissions", { cache: "no-store" });
@@ -38,34 +46,52 @@ export function RbacProvider({ children }: { children: ReactNode }) {
                 handleUnauthorized();
                 return null;
             }
-            const data: unknown = await res.json();
+            let data: unknown = null;
+            try {
+                data = await res.json();
+            } catch {
+                data = null;
+            }
+            if (!res.ok) {
+                const body = (data ?? {}) as { error?: { message?: string } | string };
+                const message = typeof body.error === "string" ? body.error : body.error?.message;
+                return { error: message || `HTTP ${res.status}` };
+            }
             const permissions = Array.isArray(data)
                 ? data.flatMap((app: { permissions?: string[] }) => app.permissions || [])
                 : [];
             return new Set<string>(permissions);
-        } catch {
-            return new Set();
+        } catch (e) {
+            return { error: e instanceof Error ? e.message : String(e) };
         }
     }, [isLoggedIn, handleUnauthorized]);
 
+    const applyActions = useCallback((actions: Set<string> | { error: string } | null) => {
+        if (actions instanceof Set) {
+            setActionSet(actions);
+            setError(null);
+        } else if (actions) {
+            setError(actions.error);
+        }
+    }, []);
+
     const loadActions = useCallback(async () => {
         setLoading(true);
-        const actions = await fetchActions();
-        if (actions) setActionSet(actions);
+        applyActions(await fetchActions());
         setLoading(false);
-    }, [fetchActions]);
+    }, [fetchActions, applyActions]);
 
     useEffect(() => {
         let cancelled = false;
         fetchActions().then((actions) => {
             if (cancelled) return;
-            if (actions) setActionSet(actions);
+            applyActions(actions);
             setLoading(false);
         });
         return () => {
             cancelled = true;
         };
-    }, [fetchActions]);
+    }, [fetchActions, applyActions]);
 
     const can = useCallback(
         (action: string) => actionSet.has(action),
@@ -96,6 +122,20 @@ export function RbacProvider({ children }: { children: ReactNode }) {
 
     if (loading) {
         return <LoadingState fullScreen />;
+    }
+
+    if (error) {
+        return (
+            <div className="w-full min-h-screen flex items-center justify-center bg-secondary-first px-4">
+                <div className="max-w-150 w-full">
+                    <ErrorBox message={`${t("permissions_error")}: ${error}`}>
+                        <button type="button" onClick={loadActions} className="ml-3 font-semibold underline">
+                            {t("retry")}
+                        </button>
+                    </ErrorBox>
+                </div>
+            </div>
+        );
     }
 
     return (

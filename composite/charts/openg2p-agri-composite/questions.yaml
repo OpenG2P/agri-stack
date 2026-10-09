@@ -8,9 +8,8 @@ questions:
   label: Composite Hostname
   group: General
 - variable: composite.image.tag
-  description: Container image tag to deploy (e.g. develop or a release like 1.0.0)
+  description: Container image tag to deploy. Empty keeps the tag the chart was built with.
   type: string
-  default: develop
   label: Image Tag
   group: General
 - variable: composite.existingUseCasesConfigMap
@@ -97,9 +96,8 @@ questions:
   group: Console
   show_if: console.enabled=true
 - variable: console.ui.image.tag
-  description: Console UI image tag (e.g. develop or a release like 1.0.0)
+  description: Console UI image tag. Empty keeps the tag the chart was built with.
   type: string
-  default: develop
   label: Console UI Image Tag
   group: Console
   show_if: console.enabled=true

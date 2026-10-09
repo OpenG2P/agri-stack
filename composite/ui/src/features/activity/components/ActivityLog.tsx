@@ -78,9 +78,13 @@ function ActivityTable({ page }: { page: ActivityPage }) {
                                 {formatDateTime(item.at)}
                             </td>
                             <td className={tdClass}>
-                                <Link href={toUseCaseHref(item.use_case)} className="font-mono text-[14px] hover:text-[#ED7C22] hover:underline">
-                                    {item.use_case}
-                                </Link>
+                                {item.use_case ? (
+                                    <Link href={toUseCaseHref(item.use_case)} className="font-mono text-[14px] hover:text-[#ED7C22] hover:underline">
+                                        {item.use_case}
+                                    </Link>
+                                ) : (
+                                    <span className="text-gray-500">—</span>
+                                )}
                             </td>
                             <td className={`${tdClass} font-mono text-[14px]`}>{item.partner_id || "—"}</td>
                             <td className={`${tdClass} font-mono text-[14px]`}>{item.http_status}</td>
@@ -205,7 +209,7 @@ export default function ActivityLog() {
                             </div>
                             {data.total > 0 ? (
                                 <div className="px-4 pt-4">
-                                    <Pagination page={page} pageSize={pageSize} total={data.total} onPageChange={setPage} />
+                                    <Pagination page={page} pageSize={pageSize} total={data.total} totalCapped={data.total_capped === true} onPageChange={setPage} />
                                 </div>
                             ) : null}
                         </div>

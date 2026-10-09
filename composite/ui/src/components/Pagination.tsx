@@ -6,6 +6,8 @@ interface PaginationProps {
   page: number;
   pageSize: number;
   total: number;
+  /** total is a lower bound (the backend stopped counting): shown as "total+". */
+  totalCapped?: boolean;
   onPageChange: (page: number) => void;
 }
 
@@ -13,6 +15,7 @@ export default function Pagination({
   page,
   pageSize,
   total,
+  totalCapped = false,
   onPageChange,
 }: PaginationProps) {
   const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -22,7 +25,7 @@ export default function Pagination({
   return (
     <div className="flex items-center justify-end gap-3">
       <span className="text-[16px] text-(--color-text-muted)">
-        {start} - {end} of {total}
+        {start} - {end} of {total}{totalCapped ? "+" : ""}
       </span>
 
       <button

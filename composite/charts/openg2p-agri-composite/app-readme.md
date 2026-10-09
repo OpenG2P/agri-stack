@@ -17,8 +17,8 @@ a minute, without a restart.
 Full documentation: [Open Agri Stack](https://docs.openg2p.org/open-agri-stack) on the OpenG2P documentation site.
 
 **Console** (on by default; `console.enabled: false` turns it off): a read-only staff console showing the use cases, registries
-and a call log (outcomes and timings, no partner data). Turn on **Enable Console** in the Console group:
-the chart then deploys the console UI at the console hostname, enables the API's admin API with IAM
+and a call log (outcomes and timings, no partner data). Untick **Enable Console** in the Console group
+to leave it out. With it on, the chart deploys the console UI at the console hostname, enables the API's admin API with IAM
 staff login, creates its database in the commons Postgres, its Keycloak client and its IAM application.
 Grant staff the `AGRI_COMPOSITE_VIEWER` or `AGRI_COMPOSITE_ADMIN` role in IAM. Needs commons
 (Postgres, Keycloak, Redis, IAM staff portal).

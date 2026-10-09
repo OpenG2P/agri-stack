@@ -83,15 +83,19 @@ def scope_gaps(claims: Dict[str, Any], sources) -> Dict[str, List[str]]:
 
 
 def requested_scopes(claims: Dict[str, Any], sources) -> List[str]:
-    """The scopes to ask for: each source's declared scopes (required and optional),
-    and, for a registry none of whose sources declares any, all its granted ones."""
+    """The scopes to ask for: each registry's declared scopes (required and optional) —
+    unless one of its sources declares none (it takes the grant as it is), in which
+    case all the scopes the consent grants for that registry."""
     granted = granted_scopes(claims)
     declared: Dict[str, Set[str]] = {}
+    takes_grant: Set[str] = set()
     for src in sources:
         declared.setdefault(src.controller, set()).update(src.scopes, src.optional_scopes)
+        if not (src.scopes or src.optional_scopes):
+            takes_grant.add(src.controller)
     out: Set[str] = set()
     for controller, scopes in declared.items():
-        out |= scopes if scopes else granted.get(controller, set())
+        out |= granted.get(controller, set()) if controller in takes_grant else scopes
     return sorted(out)
 
 

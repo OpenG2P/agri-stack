@@ -1,5 +1,6 @@
 """End-to-end query handling with stubbed PM, registries and audit manager."""
 
+import copy
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -7,7 +8,9 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 import yaml
-from conftest import AUDIT_URL, CSR_URL, FAN, FARMER_ID, FR_URL, PM_URL, SCOPES, canonical, dci_response
+from conftest import (
+    AUDIT_URL, CROP_SEASONS, CSR_URL, FAN, FARMER_ID, FARMER_RECORD, FR_URL, PM_URL, SCOPES, canonical, dci_response,
+)
 from jwt import PyJWS
 from openg2p_agri_composite.core.audit import AuditEmitter
 from openg2p_agri_composite.core.crypto import build_composite_crypto
@@ -413,3 +416,27 @@ async def test_cannot_sign_returns_500(h):
     h.crypto.helper._signing_key = None
     status, body = await h.query(h.envelope())
     assert status == 500 and body["message"]["error"]["code"] == "signing_unavailable"
+
+
+async def test_crop_sources_not_called_without_a_farmer_id(h):
+    record = copy.deepcopy(FARMER_RECORD)
+    record["farmer_personal_details"]["member_identifier"] = [
+        i for i in record["farmer_personal_details"]["member_identifier"] if i.get("identifier_type") != "FARMER_ID"]
+    h.registries.handlers[(FR_URL, None)] = lambda body: httpx.Response(200, json=dci_response(body, [record]))
+    status, body = await h.query(h.envelope())
+    assert status == 200, body
+    srcs = body["message"]["sources"]
+    for sid in ("season_summaries", "crop_seasons"):
+        assert srcs[sid]["status"] == "error" and "no subject_id" in srcs[sid]["detail"]
+    assert h.registries.calls_to(CSR_URL) == []
+
+
+async def test_a_full_page_is_flagged(h, use_cases_dir):
+    crop = h.registry.get("loan-profile").spec.sources[2]
+    assert crop.id == "crop_seasons"
+    h.registries.handlers[(CSR_URL, "spdci-extensions-agri:CropSeason")] = (
+        lambda body: httpx.Response(200, json=dci_response(body, [dict(CROP_SEASONS[0], i=n) for n in range(100)])))
+    status, body = await h.query(h.envelope())
+    assert status == 200
+    assert "first 100 records only" in body["message"]["sources"]["crop_seasons"]["detail"]
+    assert "detail" not in body["message"]["sources"]["farmer"]  # a one-record lookup is never flagged

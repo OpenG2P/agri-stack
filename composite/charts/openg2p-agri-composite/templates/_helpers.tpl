@@ -7,6 +7,21 @@
 {{- end -}}
 
 {{/*
+Service names of the API and the console UI: common.names.fullname over
+composite.* / console.ui.* (as their Service templates render it), so routing
+and in-cluster URLs match whatever the release is called. Works from the root
+context and from the console UI's merged context (which carries composite and
+console).
+*/}}
+{{- define "agriComposite.apiServiceName" -}}
+{{- include "common.names.fullname" (dict "Values" .Values.composite "Chart" .Chart "Release" .Release) -}}
+{{- end -}}
+
+{{- define "agriComposite.consoleServiceName" -}}
+{{- include "common.names.fullname" (dict "Values" .Values.console.ui "Chart" .Chart "Release" .Release) -}}
+{{- end -}}
+
+{{/*
 Name of the ConfigMap holding the use cases.
 */}}
 {{- define "agriComposite.useCasesConfigMap" -}}

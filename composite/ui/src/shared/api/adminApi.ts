@@ -35,9 +35,20 @@ function parseError(body: unknown, res: Response): { message: string; code?: str
     return { message: String(message), code: code != null ? String(code) : undefined };
 }
 
+/** True when IAM no longer has a session for this browser (/api/me answers 401). */
+async function isSessionGone(signal?: AbortSignal): Promise<boolean> {
+    try {
+        const res = await fetch("/api/me", { credentials: "include", cache: "no-store", signal });
+        return res.status === 401;
+    } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
+        return false;
+    }
+}
+
 /**
  * Returns `get(path, query?, signal?)`, which GETs `/api/admin/<path>` and resolves to the JSON
- * body or throws an AdminApiError. A 401 sends the user to the IAM login.
+ * body or throws an AdminApiError. A 401 sends the user to the IAM login when the IAM session is gone.
  */
 export function useAdminApi() {
     const { handleUnauthorized } = useAuth();
@@ -52,8 +63,13 @@ export function useAdminApi() {
                 signal,
             });
             if (res.status === 401) {
-                handleUnauthorized();
-                throw new AdminApiError("Unauthorized", 401, "G2P-AUT-401");
+                // Only a lost IAM session means "log in again": ask /api/me. If IAM still knows the
+                // user, the composite API rejected the token itself and a login would just loop.
+                if (await isSessionGone(signal)) {
+                    handleUnauthorized();
+                    throw new AdminApiError("Unauthorized", 401, "G2P-AUT-401");
+                }
+                throw new AdminApiError("The composite API rejected your session", 401, "G2P-AUT-401");
             }
             let body: unknown = null;
             try {
@@ -117,12 +133,14 @@ export function useAdminQuery<T>(path: string | null): AdminQuery<T> {
             (error: unknown) => {
                 if (controller.signal.aborted) return;
                 if (error instanceof DOMException && error.name === "AbortError") return;
-                setState({
+                // A failed reload of the same path keeps the last data (QueryView shows it + a toast).
+                setState((prev) => ({
                     key: path,
                     nonce,
+                    data: prev.key === path ? prev.data : undefined,
                     error: error instanceof Error ? error.message : "Something went wrong",
                     status: error instanceof AdminApiError ? error.status : undefined,
-                });
+                }));
             },
         );
         return () => controller.abort();

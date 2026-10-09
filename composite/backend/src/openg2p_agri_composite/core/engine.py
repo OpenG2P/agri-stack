@@ -164,10 +164,12 @@ class CompositeEngine:
                 {"http_status": http_status, "duration_ms": duration,
                  "sources": {sid: r.status for sid, r in statuses.items()}},
             )
-        if self.activity is not None:
+        if self.activity is not None and found.get("authenticated"):
+            # Only calls whose signature verified: an unsigned request could otherwise
+            # write rows under any partner's name (and at any rate).
             self.activity.record(
                 request_id=request_id, use_case=compiled.ref if compiled else use_case_ref,
-                partner_id=partner_id if isinstance(partner_id, str) else None,
+                partner_id=partner_id,
                 http_status=500 if envelope is None else http_status, outcome=outcome, reason=reason,
                 duration_ms=duration, sources={sid: r.status for sid, r in statuses.items()},
             )
@@ -206,6 +208,7 @@ class CompositeEngine:
         # Fail closed: no key, unknown partner or a bad signature all reject.
         if not await self.crypto.verify_detached(signature, {"header": header, "message": message}, sender):
             raise QueryError(401, "signature_invalid", "the request signature does not verify against the sender's Partner Management key")
+        found["authenticated"] = True
 
         allowed = compiled.spec.allowed_partners
         if "*" not in allowed and sender not in allowed:
@@ -472,6 +475,13 @@ class CompositeEngine:
             rendered = render_query(compiled.templates[src.id], context)
         except TemplateRenderError as e:
             return SourceResult(dci.ERROR, detail=f"query template: {e}")
+        expression = ((rendered.get("query") or {}).get("value") or {}).get("expression") or {}
+        named = expression.get("query") if isinstance(expression, dict) else None
+        if isinstance(named, dict) and "subject_id" in named and named["subject_id"] in (None, ""):
+            # e.g. the farmer record carries no FARMER_ID to query the crop registry by:
+            # never send a query without its subject (a registry could read it as "anyone").
+            return SourceResult(dci.ERROR, detail="not called: the query has no subject_id (the record it is "
+                                                  "read from does not carry it)")
         envelope = dci.build_search(
             request_id=request_id,
             source_id=src.id,
@@ -525,6 +535,10 @@ class CompositeEngine:
                 return SourceResult(dci.ERROR, detail="registry response signature does not verify", attempts=attempts, called=True)
 
         status, records, detail = dci.classify_body(body)
+        page_size = (rendered.get("pagination") or {}).get("page_size")
+        # A full page from a list query (not a one-record lookup) may not be everything.
+        if status == dci.OK and isinstance(page_size, int) and page_size > 1 and len(records) >= page_size and not detail:
+            detail = f"the first {page_size} records only; the registry may hold more"
         return SourceResult(status, records=records, detail=detail, attempts=attempts, called=True)
 
     # ── assembly ─────────────────────────────────────────────────────────────

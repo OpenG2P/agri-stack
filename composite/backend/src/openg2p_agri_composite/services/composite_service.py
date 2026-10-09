@@ -2,7 +2,6 @@ import asyncio
 import base64
 import json
 import logging
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -18,9 +17,6 @@ from ..core.loader import UseCaseRegistry
 
 _config = Settings.get_config()
 _logger = logging.getLogger(_config.logging_default_logger_name)
-
-
-PURGE_INTERVAL_SECONDS = 24 * 3600
 
 
 def console_active() -> bool:
@@ -76,7 +72,6 @@ class CompositeService(BaseService):
 
                 activity = ActivityStore(async_session_maker.get(), dbengine.get(), _config.activity_retention_days)
         self.activity = activity
-        self._last_purge = 0.0
         self.catalogue = ScopeCatalogue(
             registries, self.crypto, self.http_client, _config.composite_partner_id,
             ttl=_config.catalogue_cache_seconds,
@@ -142,11 +137,7 @@ class CompositeService(BaseService):
         return [{"kid": k.get("kid"), "algorithm": k.get("algorithm")} for k in keys if isinstance(k, dict)], None
 
     async def start(self):
-        if self.activity.enabled:
-            try:
-                await self.activity.create_tables()
-            except Exception:
-                _logger.exception("Cannot create the call log table; activity will not be recorded")
+        await self.activity.start()
         if _config.use_cases_reload_seconds > 0 and self._reload_task is None:
             self._reload_task = asyncio.get_running_loop().create_task(self._reload_loop())
 
@@ -155,7 +146,7 @@ class CompositeService(BaseService):
             self._reload_task.cancel()
             self._reload_task = None
         await self.audit.drain()
-        await self.activity.drain()
+        await self.activity.stop()
         if self._client is not None:
             await self._client.aclose()
             self._client = None
@@ -168,11 +159,4 @@ class CompositeService(BaseService):
                     _logger.info("Use-case files changed; reloaded")
             except Exception:
                 _logger.exception("Use-case reload failed; keeping the loaded set")
-            if self.activity.enabled and time.monotonic() - self._last_purge > PURGE_INTERVAL_SECONDS:
-                self._last_purge = time.monotonic()
-                try:
-                    deleted = await self.activity.purge()
-                    if deleted:
-                        _logger.info("Call log: %d rows older than %d days deleted", deleted, self.activity.retention_days)
-                except Exception:
-                    _logger.warning("Call log purge failed", exc_info=True)
+

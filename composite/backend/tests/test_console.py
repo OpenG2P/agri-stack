@@ -1,5 +1,6 @@
 """The console's backend: scope catalogue, call log and the read-only admin API."""
 
+import asyncio
 import json
 import types
 from datetime import datetime, timedelta, timezone
@@ -40,8 +41,9 @@ def h(use_cases_dir, composite_p12, pm_transport, registries, partner_key):
 async def store():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     s = ActivityStore(async_sessionmaker(engine, expire_on_commit=False), engine, retention_days=30)
-    await s.create_tables()
+    await s.start(maintenance=False)
     yield s
+    await s.stop()
     await engine.dispose()
 
 
@@ -56,8 +58,9 @@ def test_catalogue_url_from_the_search_url():
 async def test_catalogue_is_a_signed_post_and_cached(h):
     calls = []
 
-    def handler(request: httpx.Request):
+    async def handler(request: httpx.Request):
         calls.append(json.loads(request.content))
+        await asyncio.sleep(0.01)  # a real registry takes time: concurrent fetches overlap
         if str(request.url) == CSR_CATALOGUE:
             return httpx.Response(200, json=CSR_SCOPES)
         return httpx.Response(503)
@@ -76,6 +79,10 @@ async def test_catalogue_is_a_signed_post_and_cached(h):
     await cat.fetch("crop-sown-registry", refresh=True)
     assert len(calls) == 2
 
+    # concurrent fetches share one request
+    await asyncio.gather(*(cat.fetch("crop-sown-registry", refresh=True) for _ in range(5)))
+    assert len(calls) == 3
+
     failed = await cat.fetch("farmer-registry")
     assert failed["error"] == f"HTTP 503 from {FR_CATALOGUE}" and failed["data_scopes"] == []
 
@@ -88,8 +95,8 @@ async def test_call_log_records_filters_and_purges(store):
         store.record(request_id="r", use_case=uc, partner_id=partner, http_status=200, outcome=outcome,
                      reason=None, duration_ms=12, sources={"farmer": "ok"})
     await store.drain()
-    total, items = await store.query()
-    assert total == 3 and items[0]["sources"] == {"farmer": "ok"} and items[0]["at"].endswith("Z")
+    total, capped, items = await store.query()
+    assert total == 3 and capped is False and items[0]["sources"] == {"farmer": "ok"} and items[0]["at"].endswith("Z")
     assert (await store.query(partner="bank-a"))[0] == 2
     assert (await store.query(use_case="loan-profile"))[0] == 2
     assert (await store.query(use_case="other@2", outcome="failure"))[0] == 1
@@ -110,18 +117,46 @@ async def test_call_log_off_without_a_database():
              reason=None, duration_ms=1, sources={})  # no-op, no error
 
 
-async def test_every_query_is_recorded(h, store):
+async def test_authenticated_queries_are_recorded_unsigned_ones_are_not(h, store):
     h.engine.activity = store
     status, _ = await h.query(h.envelope())
     assert status == 200
+    # bank-z has no key in PM: its signature does not verify, so its name is not trusted.
     status, _ = await h.query(h.envelope(sender="bank-z"))
+    assert status == 401
+    garbage = h.envelope()
+    garbage["signature"] = "not-a-signature"
+    assert (await h.query(garbage))[0] == 401
     await store.drain()
-    total, items = await store.query()
-    assert total == 2
-    by_partner = {i["partner_id"]: i for i in items}
-    assert by_partner["bank-a"]["outcome"] == "success" and by_partner["bank-a"]["use_case"] == "loan-profile@1"
-    assert set(by_partner["bank-a"]["sources"]) == {"farmer", "season_summaries", "crop_seasons"}
-    assert by_partner["bank-z"]["outcome"] == "denied" and by_partner["bank-z"]["http_status"] in (401, 403)
+    total, _capped, items = await store.query()
+    assert total == 1
+    row = items[0]
+    assert row["partner_id"] == "bank-a" and row["outcome"] == "success" and row["use_case"] == "loan-profile@1"
+    assert set(row["sources"]) == {"farmer", "season_summaries", "crop_seasons"}
+
+
+async def test_failures_after_authentication_are_recorded(h, store, use_cases_dir):
+    from test_engine import set_use_case
+
+    h.engine.activity = store
+    set_use_case(h, use_cases_dir, allowed_partners=["someone-else"])
+    status, _ = await h.query(h.envelope())
+    assert status == 403
+    await store.drain()
+    _total, _c, items = await store.query()
+    assert items[0]["partner_id"] == "bank-a" and items[0]["reason"] == "partner_not_allowed"
+
+
+async def test_count_is_capped(store, monkeypatch):
+    from openg2p_agri_composite.core import activity as act
+
+    monkeypatch.setattr(act, "COUNT_CAP", 3)
+    for _ in range(5):
+        store.record(request_id="r", use_case="u@1", partner_id="p", http_status=200, outcome="success",
+                     reason=None, duration_ms=1, sources={})
+    await store.drain()
+    total, capped, items = await store.query(limit=2)
+    assert (total, capped, len(items)) == (3, True, 2)
 
 
 # ── admin API ───────────────────────────────────────────────────────────────
@@ -209,7 +244,7 @@ async def test_admin_partners_and_activity(admin, h, store):
     assert (await admin.list_activity(limit=50, offset=0, partner=None, use_case=None, outcome="bad")).status_code == 400
     admin.service.activity = ActivityStore()
     assert await admin.list_activity(limit=50, offset=0, partner=None, use_case=None, outcome=None) == \
-        {"recording": False, "total": 0, "items": []}
+        {"recording": False, "total": 0, "total_capped": False, "items": []}
 
 
 def test_registry_urls_used_in_tests():

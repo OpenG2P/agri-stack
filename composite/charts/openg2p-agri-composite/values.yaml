@@ -85,7 +85,9 @@ composite:
       enabled: true
       host: '{{ tpl .Values.global.compositeHostname $ }}'
       gateway: "internal"
-      destination: '{{ .Release.Name }}-api'
+      # The API Service's name (common.names.fullname of composite.*), so release
+      # names containing "api" or "console" still route.
+      destination: '{{ include "agriComposite.apiServiceName" $ }}'
       destinationPort: 80
       prefix: /
       rewriteUri: ""
@@ -381,8 +383,8 @@ composite:
     failureThreshold: 6
 
 # ── Console (read-only staff console) ───────────────────────────────────────
-# Off by default: nothing below is rendered and the API runs as before (partner
-# API only, no database, no IAM). On:
+# On by default; console.enabled: false turns it off (nothing below is rendered
+# and the API serves the partner API only: no database, no IAM). On:
 #   - the API gets the admin API (/composite/v1/admin) with IAM staff login and
 #     a Postgres database for its call log (AGRI_COMPOSITE_CONSOLE_* / DB_* /
 #     AUTH_* env, see agriComposite.consoleApiEnv in _helpers.tpl);
@@ -443,8 +445,10 @@ console:
       enabled: true
       timeoutSeconds: 180
       image:
-        repository: jbergknoff/postgresql-client
-        tag: latest
+        # Any image with sh and psql; the command is set explicitly (this one's
+        # entrypoint is its init script). Same image as pgInit.
+        repository: openg2p/postgres-init
+        tag: "1.2.0"
         pullPolicy: IfNotPresent
     # Job (regular resource, every install/upgrade) creating the database and
     # user with the Postgres superuser; idempotent (re-syncs the password).
@@ -483,7 +487,8 @@ console:
       tag: "1.2.0"
       pullPolicy: IfNotPresent
     clientName: Agri Stack Composite Console
-    # Secret with key client_secret (used by iamRegister).
+    # Secret with key client_secret (used by iamRegister). When keycloakInit is
+    # off, iamRegister is not rendered either (it needs this client secret).
     clientSecretName: '{{ tpl .Values.console.iam.keycloakClientId $ }}-keycloak-client'
     # Must match the role mnemonics in files/iam-registration/payload.json.
     clientRoles:
@@ -497,6 +502,7 @@ console:
 
   # ── IAM registration (application tile + permissions + roles) ─────────────
   # Pushes files/iam-registration/payload.json to the IAM staff portal API.
+  # Rendered only with keycloakInit.enabled (its token uses that client secret).
   iamRegister:
     enabled: true
     # true: run as a Helm post-install/post-upgrade hook (standalone installs).
@@ -515,14 +521,18 @@ console:
     tokenMaxAttempts: 30
     registerMaxAttempts: 10
     ttlSecondsAfterFinished: 600
+    # Hook objects are deleted once they succeed (hook-succeeded), so none is
+    # left behind to collide with the regular Job/ConfigMap of the same name
+    # when runAsHook is later switched to false (Helm refuses to adopt an object
+    # it does not own, and the upgrade fails).
     annotations:
       "helm.sh/hook": post-install,post-upgrade
       "helm.sh/hook-weight": "20"
-      "helm.sh/hook-delete-policy": before-hook-creation
+      "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
     payloadAnnotations:
       "helm.sh/hook": post-install,post-upgrade
       "helm.sh/hook-weight": "19"
-      "helm.sh/hook-delete-policy": before-hook-creation
+      "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
     resources:
       requests:
         cpu: 25m
@@ -585,7 +595,8 @@ console:
         enabled: true
         host: '{{ tpl .Values.global.consoleHostname $ }}'
         gateway: "internal"
-        destination: '{{ .Release.Name }}-console'
+        # The console UI Service's name (common.names.fullname of console.ui.*).
+        destination: '{{ include "agriComposite.consoleServiceName" $ }}'
         destinationPort: 80
         prefix: /
         rewriteUri: ""
@@ -594,7 +605,7 @@ console:
 
     envVars:
       # The composite API service in this release (server-side proxy target).
-      BACKEND_URL: 'http://{{ .Release.Name }}-api'
+      BACKEND_URL: 'http://{{ include "agriComposite.apiServiceName" $ }}'
       IAM_URL: '{{ tpl .Values.console.iam.publicUrl $ }}'
       LOGIN_PROVIDER_ID: '{{ .Values.console.iam.loginProviderId }}'
       APPLICATION_MNEMONIC: '{{ tpl .Values.console.iam.keycloakClientId $ }}'
@@ -642,7 +653,7 @@ console:
 # failOnError: false (values only) makes it report-only.
 sanity:
   enabled: true
-  baseUrl: 'http://{{ .Release.Name }}-api'
+  baseUrl: 'http://{{ include "agriComposite.apiServiceName" $ }}'
   readinessTimeout: 180
   failOnError: true
   resources:

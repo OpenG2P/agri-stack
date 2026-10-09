@@ -8,6 +8,7 @@ Answers are cached per registry for ``ttl`` seconds; a failure is cached too
 (briefly), so an unreachable registry does not slow every page.
 """
 
+import asyncio
 import logging
 import time
 import uuid
@@ -43,6 +44,9 @@ class ScopeCatalogue:
         self.ttl = ttl
         self.timeout = timeout
         self._cache: Dict[str, tuple] = {}  # controller -> (expires_at, result)
+        # One fetch per registry at a time (per worker): concurrent page loads and
+        # refreshes share it instead of each sending a signed POST.
+        self._inflight: Dict[str, asyncio.Future] = {}
 
     def cached(self, controller: str) -> Optional[Dict[str, Any]]:
         entry = self._cache.get(controller)
@@ -54,11 +58,23 @@ class ScopeCatalogue:
             hit = self.cached(controller)
             if hit is not None:
                 return hit
-        endpoint = self.registries[controller]
-        result = await self._fetch(controller, endpoint)
-        ttl = self.ttl if result["error"] is None else min(self.ttl, FAILURE_TTL_SECONDS)
-        self._cache[controller] = (time.monotonic() + ttl, result)
-        return result
+        pending = self._inflight.get(controller)
+        if pending is not None:
+            return await asyncio.shield(pending)
+        future = asyncio.get_running_loop().create_future()
+        self._inflight[controller] = future
+        try:
+            result = await self._fetch(controller, self.registries[controller])
+            ttl = self.ttl if result["error"] is None else min(self.ttl, FAILURE_TTL_SECONDS)
+            self._cache[controller] = (time.monotonic() + ttl, result)
+            future.set_result(result)
+            return result
+        except BaseException as e:
+            future.set_exception(e)
+            future.exception()  # retrieved: no "never retrieved" warning when nobody else waited
+            raise
+        finally:
+            self._inflight.pop(controller, None)
 
     async def _fetch(self, controller: str, endpoint: Dict[str, Any]) -> Dict[str, Any]:
         url = catalogue_url(endpoint)

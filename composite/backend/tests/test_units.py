@@ -229,3 +229,16 @@ def test_token_bucket():
     now[0] += 30  # half the period refills one token
     assert rl.allow("p", "u@1", 2, 60) is True
     assert rl.allow("p", "u@1", 2, 60) is False
+
+
+def test_requested_scopes_take_the_whole_grant_for_a_registry_with_an_undeclared_source():
+    from openg2p_agri_composite.core.consent import requested_scopes
+
+    dci_spec = {"reg_type": "Farmer", "reg_record_type": "x", "query_template": "{}"}
+    s1 = SourceSpec(id="s1", controller="fr", scopes=["fr.a"], dci=dci_spec)
+    s2 = SourceSpec(id="s2", controller="fr", dci=dci_spec)
+    s3 = SourceSpec(id="s3", controller="csr", scopes=["csr.x"], optional_scopes=["csr.y"], dci=dci_spec)
+    claims = {"grants": [{"data_controller": "fr", "data_scopes": ["fr.a", "fr.b", "fr.c"]},
+                         {"data_controller": "csr", "data_scopes": ["csr.x", "csr.y", "csr.z"]}]}
+    assert requested_scopes(claims, [s1, s2, s3]) == ["csr.x", "csr.y", "fr.a", "fr.b", "fr.c"]
+    assert requested_scopes(claims, [s1, s3]) == ["csr.x", "csr.y", "fr.a"]

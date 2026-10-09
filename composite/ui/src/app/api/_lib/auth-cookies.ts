@@ -92,7 +92,23 @@ export function applyBackendSetCookies(source: Response, target: NextResponse): 
 }
 
 export async function jsonResponseFromBackend(source: Response): Promise<NextResponse> {
-    const data = await source.json();
+    let data: unknown;
+    try {
+        data = await source.json();
+    } catch {
+        // Not JSON (HTML error page, empty body, ...): a 502 the UI can show instead of a blank page.
+        const response = NextResponse.json(
+            {
+                error: {
+                    code: 'upstream_error',
+                    message: `Unexpected answer from upstream (HTTP ${source.status})`,
+                },
+            },
+            { status: 502 },
+        );
+        applyBackendSetCookies(source, response);
+        return response;
+    }
     const response = NextResponse.json(data, { status: source.status });
     applyBackendSetCookies(source, response);
     return response;

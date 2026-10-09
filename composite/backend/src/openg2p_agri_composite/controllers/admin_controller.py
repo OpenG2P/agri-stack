@@ -194,10 +194,11 @@ class AdminController(BaseController):
         """The call log, newest first."""
         activity = self.service.activity
         if not activity.enabled:
-            return {"recording": False, "total": 0, "items": []}
+            return {"recording": False, "total": 0, "total_capped": False, "items": []}
         if outcome and outcome not in OUTCOMES:
             return JSONResponse(status_code=400, content={"error": {
                 "code": "invalid_outcome", "message": f"outcome must be one of {list(OUTCOMES)}"}})
-        total, items = await activity.query(limit=limit, offset=offset, partner=partner,
-                                            use_case=use_case, outcome=outcome)
-        return {"recording": True, "total": total, "items": items}
+        total, capped, items = await activity.query(limit=limit, offset=offset, partner=partner,
+                                                    use_case=use_case, outcome=outcome)
+        # total stops at 10000 (total_capped true): counting a large log on every page load is slow.
+        return {"recording": True, "total": total, "total_capped": capped, "items": items}

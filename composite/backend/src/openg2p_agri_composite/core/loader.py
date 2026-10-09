@@ -211,11 +211,26 @@ def compile_use_case(raw: Dict[str, Any], path: str, known_controllers: Optional
         mapping=mapping,
         derived=derived,
         sources={s.id: s for s in spec.sources},
-        field_sources=field_sources(spec.response.mapping, spec.response.derived),
+        field_sources=_field_sources_checked(spec.response.mapping, spec.response.derived),
     )
 
 
 _SOURCE_REF = re.compile(r"\$\.sources\.([A-Za-z0-9_-]+)")
+# Forms whose sources cannot be told from the text: bracket or wildcard steps right
+# after $ / $.sources / $.data, and recursive descent. Rejected at load, so a field
+# built from a failed source is always known (and null).
+_UNTRACEABLE = re.compile(r"\$\s*\[|\$\.\.|\$\.\*|\$\.(sources|data)\s*(\[|\.\*|\.\.)")
+
+
+def _field_sources_checked(mapping: Dict[str, str], derived: Dict[str, str]) -> Dict[str, frozenset]:
+    for kind, items in (("mapping", mapping), ("derived", derived)):
+        for name, text in items.items():
+            if _UNTRACEABLE.search(text or ""):
+                raise UseCaseConfigError(
+                    f"response.{kind}.{name}: name sources and outputs in dotted form "
+                    "($.sources.<id>..., $.data.<path>), not with [...], * or .. right after $, "
+                    "$.sources or $.data (needed to null fields built from a failed source)")
+    return field_sources(mapping, derived)
 _DATA_REF = re.compile(r"\$\.data\.([A-Za-z0-9_.-]+)")
 
 

@@ -12,6 +12,7 @@
   "search": "Search",
   "refresh": "Refresh",
   "retry": "Retry",
+  "permissions_error": "Could not load your permissions",
   "goBack": "Go back",
   "no_results": "No results found",
   "none": "None",

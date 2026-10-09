@@ -1,6 +1,6 @@
 {{- if .Values.console.enabled }}
 {{- $values := .Values.console.ui -}}
-{{- $context := dict "Values" (merge (deepCopy $values) (dict "global" .Values.global "console" .Values.console)) "Chart" .Chart "Release" .Release "Files" .Files "Capabilities" .Capabilities -}}
+{{- $context := dict "Values" (merge (deepCopy $values) (dict "global" .Values.global "console" .Values.console "composite" .Values.composite)) "Chart" .Chart "Release" .Release "Files" .Files "Capabilities" .Capabilities -}}
 {{- with $context -}}
 {{- if and .Values.istio.enabled .Values.istio.virtualservice.enabled }}
 {{- $hostname := include "common.tplvalues.render" (dict "value" .Values.istio.virtualservice.host "context" $) }}

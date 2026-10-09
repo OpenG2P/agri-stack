@@ -16,6 +16,11 @@ global:
 console:
   iamRegister:
     runAsHook: false
+{{- if .Values.baseDomain }}
+  # Portal links shown in the console, on the same base domain.
+  pmPortalUrl: {{ printf "https://partner-management.%s" .Values.baseDomain | quote }}
+  cmPortalUrl: {{ printf "https://consent-manager.%s" .Values.baseDomain | quote }}
+{{- end }}
 
 composite:
   # Department registries (data controller ID → partner DCI sync search URL).

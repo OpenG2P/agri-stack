@@ -31,6 +31,9 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+const LOGIN_REDIRECT_KEY = 'agri-composite-login-redirect-at';
+const LOGIN_REDIRECT_GUARD_MS = 30_000;
+
 export function AuthProvider({ children }: { children: ReactNode }) {
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [user, setUser] = useState<AuthUser | null>(null);
@@ -41,12 +44,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const logout = useCallback(() => {
         setIsLoggedIn(false);
         setUser(null);
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- /api route: needs a full page load
         window.location.href = '/api/logout';
     }, []);
 
     const handleUnauthorized = useCallback(() => {
         setIsLoggedIn(false);
         setUser(null);
+        // One-shot guard: a second redirect within LOGIN_REDIRECT_GUARD_MS means login does not
+        // fix the 401, so show the error screen instead of looping through the IAM login.
+        let last = 0;
+        try {
+            last = Number(window.sessionStorage.getItem(LOGIN_REDIRECT_KEY)) || 0;
+        } catch { }
+        if (Date.now() - last < LOGIN_REDIRECT_GUARD_MS) {
+            setErrorCode('AUTH_GENERIC_ERROR');
+            return;
+        }
+        try {
+            window.sessionStorage.setItem(LOGIN_REDIRECT_KEY, String(Date.now()));
+        } catch { }
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- /api route: needs a full page load
         window.location.href = `/api/login?redirect_uri=${encodeURIComponent(window.location.href)}`;
     }, []);
 
@@ -99,15 +117,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     return;
                 }
 
-                const data = await res.json();
-
-                if (res.ok) {
-                    setUser(data);
-                    setIsLoggedIn(true);
+                if (!res.ok) {
+                    setErrorCode('AUTH_GENERIC_ERROR');
+                    return;
                 }
 
+                const data = await res.json();
+                setUser(data);
+                setIsLoggedIn(true);
             } catch {
-                // Network error: stay logged out (the provider renders nothing).
+                // Network error or a non-JSON answer: show the error screen, not a blank page.
+                setErrorCode('AUTH_GENERIC_ERROR');
             } finally {
                 setIsLoading(false);
             }

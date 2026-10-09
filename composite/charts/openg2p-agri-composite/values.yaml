@@ -33,7 +33,7 @@ composite:
   # purpose (Python RSS does not shrink, so a memory HPA never scales back down).
   # Rate limits are per pod and worker; global limits belong to the API gateway.
   autoscaling:
-    enabled: true
+    enabled: false
     minReplicas: 1
     maxReplicas: 5
     targetCPUUtilizationPercentage: 70

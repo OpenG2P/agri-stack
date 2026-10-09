@@ -189,7 +189,7 @@ questions:
 - variable: composite.autoscaling.enabled
   description: Autoscale the stateless API pods on CPU
   type: boolean
-  default: true
+  default: false
   label: Enable Autoscaling
   group: Scaling
 - variable: composite.autoscaling.minReplicas

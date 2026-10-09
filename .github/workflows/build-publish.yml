@@ -60,7 +60,7 @@ jobs:
            "context": "composite"}
         ]
 
-      chart-path: composite/deployment/charts/openg2p-agri-composite
+      chart-path: composite/charts/openg2p-agri-composite
 
       # The sanity Job reuses the API image (.composite.image); the console UI has its own.
       chart-image-paths: '[".composite.image.tag", ".console.ui.image.tag"]'

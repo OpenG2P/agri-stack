@@ -1,7 +1,7 @@
 # Helm (fetched chart dependencies)
-deployment/charts/*/charts/
-deployment/charts/*/Chart.lock
-deployment/charts/*/*.tgz
+charts/*/charts/
+charts/*/Chart.lock
+charts/*/*.tgz
 
 # Python
 __pycache__/

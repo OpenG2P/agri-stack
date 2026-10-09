@@ -2,7 +2,7 @@
 **/*.pyc
 **/.pytest_cache
 backend/tests
-deployment
+charts
 scripts
 *.p12
 *.pem

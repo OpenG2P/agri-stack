@@ -1,7 +1,13 @@
-<p align="center"><img src="assets/agri-stack-logo.jpg" alt="Open Agri Stack — DPI for Agriculture" width="180"></p>
+<p align="center"><img src="assets/agri-stack-logo.jpg" alt="Agri Stack — DPI for Agriculture" width="180"></p>
 
-# Open Agri Stack
+# Agri Stack
 
 Digital public infrastructure for agriculture: functional registries, reference data and shared DPI services, built on OpenG2P.
 
-This repository holds the **use-case composite** service (`composite/`). The documentation is on the OpenG2P documentation site: [Open Agri Stack](https://docs.openg2p.org/open-agri-stack) (what it is, architecture and concepts, design, implementation, guides, open items).
+This repository holds:
+
+* `composite/`: the **use-case composite** service, its staff console (`ui/`), Helm chart and use cases;
+* `deploy/`: install bundles (the Agri Exchange tier);
+* `scripts/`: test scripts (partner test over public APIs, end-to-end test) and the composite's uninstall script.
+
+The documentation is on the OpenG2P documentation site: [Agri Stack](https://docs.openg2p.org/open-agri-stack) (what it is, architecture and concepts, design, implementation, guides, open items).

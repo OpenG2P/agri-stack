@@ -1,0 +1,4 @@
+# scripts: partner_kit.py and e2e.py (tests: also pytest)
+cryptography>=42
+pyjwt>=2.8
+httpx>=0.27

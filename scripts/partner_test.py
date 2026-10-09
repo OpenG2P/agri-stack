@@ -4,7 +4,7 @@
 No kubectl, no database: everything goes through the services' public URLs, as in a real
 deployment. Run it from any machine that can reach the environment's hostnames.
 
-  python composite/scripts/partner_test.py --base-domain agrix.openg2p.org --partner bank-a
+  python scripts/partner_test.py --base-domain agrix.openg2p.org --partner bank-a
 
 The farmer defaults to a sample farmer every demo install has (--fan to pick another).
 
@@ -38,7 +38,7 @@ With both set and --auto-approve, the whole run needs no manual step.
 
 Exit codes: 0 ok, 1 error, 2 a step was not completed (timed out or refused), 3 the query
 failed or a source did not answer ok.
-Needs: pip install -r composite/scripts/requirements.txt
+Needs: pip install -r scripts/requirements.txt
 """
 
 from __future__ import annotations

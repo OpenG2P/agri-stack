@@ -1,0 +1,6 @@
+dependencies:
+- name: common
+  repository: https://openg2p.github.io/openg2p-helm
+  version: 2.30.0
+digest: sha256:b79cbd020829c3cd00f9dfab15fb76ced36b975e99cce4fd13ce12ff81580a20
+generated: "2026-10-09T06:45:41.262265+05:30"

@@ -6,14 +6,14 @@ services through `kubectl port-forward` (closed on exit), sets up a test partner
 and the composite's signing key, picks a farmer who has crop seasons, calls the
 `loan-profile` use case and prints the composite's JSON answer.
 
-  python composite/scripts/e2e.py --namespace trial --partner bank-a --dry-run   # look only: GETs and SELECTs
-  python composite/scripts/e2e.py --namespace trial --partner bank-a             # set up (asks first), then call
-  python composite/scripts/e2e.py --namespace trial --partner bank-a --call-only --fan <FAN> \\
+  python scripts/e2e.py --namespace trial --partner bank-a --dry-run   # look only: GETs and SELECTs
+  python scripts/e2e.py --namespace trial --partner bank-a             # set up (asks first), then call
+  python scripts/e2e.py --namespace trial --partner bank-a --call-only --fan <FAN> \\
          --crop-year 2018 --season SEASON_MEHER --emit-curl --emit-postman loan-profile.postman.json
 
 Registries in other namespaces (department installs; the composite in the exchange, e.g. agrix):
 
-  python composite/scripts/e2e.py --namespace agrix --partner bank-a \\
+  python scripts/e2e.py --namespace agrix --partner bank-a \\
          --fr-namespace trial --csr-namespace dept1
 
 --partner is required: it must be one of the use case's allowed_partners
@@ -46,7 +46,7 @@ conflict, writes not confirmed), 3 the call failed or a source did not answer ok
 
 Secrets (admin client secrets, the .p12 password) are read with kubectl into memory and never
 printed. Logs mask the FAN; the composite's answer is printed as returned.
-Needs: pip install -r composite/scripts/requirements.txt
+Needs: pip install -r scripts/requirements.txt
 """
 
 from __future__ import annotations
@@ -646,7 +646,7 @@ def curl_command(base_url: str, envelope: dict, use_case: str = USE_CASE) -> str
 
 def postman_collection(envelope: dict, ingress_url: str, forward_url: str, expires_at: str,
                        use_case: str = USE_CASE) -> dict:
-    note = (f"Pre-signed by composite/scripts/e2e.py. The signature and the consent expire at {expires_at} "
+    note = (f"Pre-signed by scripts/e2e.py. The signature and the consent expire at {expires_at} "
             f"(about {SIGNATURE_WINDOW_S // 60} minutes after signing: header.message_ts and the consent's "
             "issued_at must be close to now). Do not edit the body: the signature covers it. Rerun the script "
             "with --emit-postman for a fresh request.")
@@ -1507,7 +1507,7 @@ def main(argv=None) -> int:
     p.add_argument("--yes", "-y", action="store_true", help="make the listed writes without asking")
     p.add_argument("--emit-curl", action="store_true", help="print a pre-signed curl (valid ~5 min)")
     p.add_argument("--emit-postman", metavar="FILE", help="write a Postman collection with a pre-signed request")
-    p.add_argument("--out-dir", help="where to save the response JSON (default composite/scripts/out/, git-ignored)")
+    p.add_argument("--out-dir", help="where to save the response JSON (default scripts/out/, git-ignored)")
     p.add_argument("--print", action="store_true", help="also print the response JSON to stdout")
     p.add_argument("--partner", required=True,
                    help="REQUIRED. Test partner ID (DCI sender_id); must be in the use case's allowed_partners, "

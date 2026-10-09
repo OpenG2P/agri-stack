@@ -1,7 +1,7 @@
 """Unit tests for the pure parts of e2e.py and partner_kit.py (no cluster, no network).
 
-  pip install -r composite/scripts/requirements.txt pytest
-  pytest composite/scripts/tests
+  pip install -r scripts/requirements.txt pytest
+  pytest scripts/tests
 """
 
 import base64

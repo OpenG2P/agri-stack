@@ -1,0 +1,10 @@
+# scripts/: partner kit output (test keys and keystores — never commit private keys),
+# test responses (a farmer's personal data) and pre-signed requests
+scripts/kit-out/
+scripts/out/
+*.postman.json
+*.p12
+*.pem
+__pycache__/
+.pytest_cache/
+.ruff_cache/

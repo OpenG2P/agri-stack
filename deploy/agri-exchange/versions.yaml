@@ -4,7 +4,4 @@ bundleVersion: 0.1.0-develop
 charts:
   commonsBase: 0.0.0-develop.293       # openg2p/openg2p-commons-base
   commonsServices: 0.0.0-develop.293   # openg2p/openg2p-commons-services (bundles openg2p-consent-manager 0.0.0-develop.64)
-  # TODO: bump to the first build after 0.0.0-develop.39 (iam-core develop):
-  # .30 has no console; builds up to .39 predate commit 3c3b0d1, so their API
-  # image fails to start with the console on. Not published yet (newest: .39).
-  agriComposite: 0.0.0-develop.30      # openg2p/openg2p-agri-composite
+  agriComposite: 0.0.0-develop.42      # openg2p/openg2p-agri-composite

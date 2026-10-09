@@ -77,7 +77,8 @@ class Harness:
         claims.update(extra)
         return (key or self.partner_key).sign_compact(claims)
 
-    def envelope(self, subject=None, parameters=None, consent="default", sender="bank-a", key=None, ts=None):
+    def envelope(self, subject=None, parameters=None, consent="default", sender="bank-a", key=None, ts=None,
+                 consent_id=None):
         header = {
             "version": "1.0.0", "message_id": str(uuid.uuid4()),
             "message_ts": ts or datetime.now(timezone.utc).isoformat(),
@@ -88,6 +89,8 @@ class Harness:
             consent = self.consent(subject=message["subject"])
         if consent is not None:
             message["consent_jws"] = consent
+        if consent_id is not None:
+            message["consent_id"] = consent_id
         sig = (key or self.partner_key).sign_detached({"header": header, "message": message})
         return {"signature": sig, "header": header, "message": message}
 

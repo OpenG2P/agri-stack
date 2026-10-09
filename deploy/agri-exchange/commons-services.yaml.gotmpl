@@ -97,3 +97,9 @@ openg2p-consent-manager:
       secretKey: {{ $cm.p12Key | quote }}
       passwordSecretName: {{ $cm.secretName | quote }}
       passwordSecretKey: {{ $cm.passwordKey | quote }}
+  # Partner portal (consent collected in person: partner users create requests and
+  # upload the signed form; CM staff verify it), with its evidence store in Garage.
+  # The use-case pages read the composite's public use-case list.
+  partnerPortal:
+    enabled: {{ .Values.partnerPortal }}
+    compositeUrl: {{ printf "https://agri-composite.%s" (.Values.baseDomain | default (printf "%s.openg2p.org" .Values.namespace)) | quote }}

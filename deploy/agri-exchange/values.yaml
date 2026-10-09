@@ -36,3 +36,8 @@ exchangeCmUrl: ""
 notifications: false     # Novu (commons-base)
 publicCatalogue: false   # Master Data public catalogue (/public routes)
 kafkaUi: false           # Kafka UI (commons-base)
+
+
+# The Consent Manager's partner portal (consent collected in person, staff-verified).
+# Needs one-time Keycloak steps in the "partner" realm (see the CM chart's app-readme).
+partnerPortal: true

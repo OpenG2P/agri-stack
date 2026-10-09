@@ -175,3 +175,71 @@ def test_settings_default_passthrough_and_reject_unknown_mode(monkeypatch):
     assert s.consent_mode == "exchange" and s.consent_exchange_cm_url == CM_URL
     with pytest.raises(ValidationError):
         Settings(consent_mode="bogus")
+
+
+
+# ── a stored consent (message.consent_id) ───────────────────────────────────
+
+def by_id_response(grants=None, receipts=None, decision="permit"):
+    grants = {c: list(v) for c, v in SCOPES.items()} if grants is None else grants
+    receipts = {c: RECEIPTS[c] for c in grants} if receipts is None else receipts
+    return lambda body: httpx.Response(200, json={"decision": decision, "reason_code": "ok",
+                                                  "grants": grants, "receipts": receipts})
+
+
+async def test_consent_id_is_checked_at_the_exchange_cm_and_registries_get_receipts(x):
+    x.cm.response = by_id_response()
+    status, body = await x.query(x.envelope(consent=None, consent_id="c-123"))
+    assert status == 200, body
+    assert all(s["status"] == "ok" for s in body["message"]["sources"].values())
+    _url, req = x.cm.calls[0]
+    assert req["consent_id"] == "c-123" and req["consent_partner_id"] == "bank-a"
+    assert req["partner_id"] == "agri-composite" and req["issue_receipts"] is True
+    assert "consent_jws" not in req
+    assert req["request_context"]["requested_scopes"] == sorted(s for v in SCOPES.values() for s in v)
+    assert [authorize(c)["consent_jws"] for c in x.registries.calls_to(FR_URL)] == ["fr.receipt.jws"]
+
+
+async def test_consent_id_needs_exchange_mode(x):
+    x.engine.settings.consent_mode = "passthrough"
+    status, body = await x.query(x.envelope(consent=None, consent_id="c-123"))
+    assert status == 400 and body["message"]["error"]["code"] == "consent_id_needs_exchange"
+
+
+async def test_consent_id_and_consent_jws_together_are_refused(x):
+    status, body = await x.query(x.envelope(consent_id="c-123"))
+    assert status == 400 and body["message"]["error"]["code"] == "invalid_input"
+    assert x.cm.calls == []
+
+
+async def test_consent_id_without_a_grant_for_a_mandatory_registry(x):
+    x.cm.response = by_id_response(grants={"crop-sown-registry": list(SCOPES["crop-sown-registry"])})
+    status, body = await x.query(x.envelope(consent=None, consent_id="c-123"))
+    assert status == 403 and body["message"]["error"]["code"] == "consent_grant_missing"
+    assert x.registries.calls == []
+
+
+async def test_consent_id_missing_a_required_scope(x):
+    grants = {c: list(v) for c, v in SCOPES.items()}
+    grants["farmer-registry"].remove("farmer-registry.farmer_identifiers")
+    x.cm.response = by_id_response(grants=grants)
+    status, body = await x.query(x.envelope(consent=None, consent_id="c-123"))
+    assert status == 403 and body["message"]["error"]["code"] == "consent_scope_missing"
+
+
+async def test_consent_id_partial_grant_for_an_optional_registry(x):
+    grants = {c: list(v) for c, v in SCOPES.items()}
+    grants["crop-sown-registry"] = ["crop-sown-registry.location"]
+    x.cm.response = by_id_response(grants=grants)
+    status, body = await x.query(x.envelope(consent=None, consent_id="c-123"))
+    assert status == 200, body
+    srcs = body["message"]["sources"]
+    assert srcs["farmer"]["status"] == "ok"
+    assert srcs["crop_seasons"]["status"] == "denied" and x.registries.calls_to(CSR_URL) == []
+
+
+async def test_consent_id_denied_by_the_cm(x):
+    x.cm.response = lambda body: httpx.Response(200, json={"decision": "deny", "reason_code": "revoked"})
+    status, body = await x.query(x.envelope(consent=None, consent_id="c-123"))
+    assert status == 403 and body["message"]["error"]["code"] == "consent_denied"
+    assert "revoked" in body["message"]["error"]["message"]

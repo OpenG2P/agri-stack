@@ -72,7 +72,11 @@ def scope_gaps(claims: Dict[str, Any], sources) -> Dict[str, List[str]]:
     """{source_id: required scopes the consent does not grant}, for sources that
     declare scopes and whose registry the consent does grant (a registry with no
     grant at all is the grant check's business)."""
-    granted = granted_scopes(claims)
+    return scope_gaps_for(granted_scopes(claims), sources)
+
+
+def scope_gaps_for(granted: Dict[str, Set[str]], sources) -> Dict[str, List[str]]:
+    """As scope_gaps, from {controller: granted scope IDs} (e.g. a Consent Manager's answer)."""
     gaps: Dict[str, List[str]] = {}
     for src in sources:
         if src.scopes and src.controller in granted:
@@ -96,6 +100,17 @@ def requested_scopes(claims: Dict[str, Any], sources) -> List[str]:
     out: Set[str] = set()
     for controller, scopes in declared.items():
         out |= granted.get(controller, set()) if controller in takes_grant else scopes
+    return sorted(out)
+
+
+def declared_scopes(sources) -> Optional[List[str]]:
+    """Every scope the use case's sources name (required and optional), or None when a
+    source names none (it takes its registry's grant as it is, so no list can be sent)."""
+    out: Set[str] = set()
+    for src in sources:
+        if not (src.scopes or src.optional_scopes):
+            return None
+        out.update(src.scopes, src.optional_scopes)
     return sorted(out)
 
 

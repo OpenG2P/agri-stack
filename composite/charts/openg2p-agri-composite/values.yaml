@@ -143,6 +143,10 @@ composite:
   # mounted at useCasesMountPath; pods reload changed files every
   # useCasesReloadSeconds without a restart. Set existingUseCasesConfigMap to
   # mount your own ConfigMap instead (keys = <name>.yaml).
+  # Browser origins allowed to call the composite's APIs (comma-separated), e.g.
+  # https://consent-partner-portal.<namespace>.openg2p.org for the partner portal's
+  # use-case pages. Empty: none (no CORS headers).
+  corsAllowOrigins: ""
   existingUseCasesConfigMap: ""
   useCasesMountPath: /app/config/use-cases
   useCasesReloadSeconds: 30
@@ -320,6 +324,9 @@ composite:
     AGRI_COMPOSITE_USE_CASES_RELOAD_SECONDS: '{{ .Values.useCasesReloadSeconds }}'
     AGRI_COMPOSITE_SIGNING_P12_PATH: '{{ .Values.signingKey.mountPath }}/{{ .Values.signingKey.p12Key }}'
     AGRI_COMPOSITE_LOGGING_LEVEL: INFO
+    # Browser origins allowed to call the composite (e.g. the Consent Manager's partner
+    # portal reading the public use-case list). Comma-separated; empty = no CORS.
+    AGRI_COMPOSITE_CORS_ALLOW_ORIGINS: '{{ tpl (.Values.corsAllowOrigins | default "") $ }}'
     AGRI_COMPOSITE_CONSENT_MODE: '{{ .Values.consent.mode | default "passthrough" }}'
     AGRI_COMPOSITE_CONSENT_EXCHANGE_CM_URL: '{{ tpl (.Values.consent.exchangeCmUrl | default "") $ }}'
     AGRI_COMPOSITE_CONSENT_EXCHANGE_CM_TIMEOUT_SECONDS: '{{ .Values.consent.exchangeCmTimeoutSeconds | default 5 }}'

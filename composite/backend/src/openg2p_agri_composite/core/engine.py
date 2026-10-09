@@ -21,7 +21,15 @@ import httpx
 
 from . import dci
 from .audit import AuditEmitter
-from .consent import ConsentError, check_consent, decode_claims, requested_scopes, scope_gaps
+from .consent import (
+    ConsentError,
+    check_consent,
+    declared_scopes,
+    decode_claims,
+    requested_scopes,
+    scope_gaps,
+    scope_gaps_for,
+)
 from .crypto import CompositeCrypto
 from .expr import evaluate, set_path
 from .loader import CompiledUseCase, UseCaseRegistry
@@ -112,7 +120,11 @@ class CompositeEngine:
             self._rate_limit(compiled, partner_id)
             granted, preset = await self._check_consent(compiled, message, subject, partner_id)
             receipts = None
-            if self.settings.consent_mode == "exchange":
+            if granted is None:
+                # A stored consent (message.consent_id): the exchange CM decides what it grants.
+                receipts, granted, preset = await self._exchange_consent_by_id(
+                    compiled, message, subject, partner_id, request_id)
+            elif self.settings.consent_mode == "exchange":
                 receipts, exchange_preset = await self._exchange_consent(compiled, message, subject, granted, request_id)
                 preset = {**exchange_preset, **preset}
             self._emit(compiled, "request", request_id, partner_id, "success")
@@ -273,8 +285,21 @@ class CompositeEngine:
         consent_jws = message.get("consent_jws")
         if consent_jws is not None and not isinstance(consent_jws, str):
             raise QueryError(400, "invalid_input", "message.consent_jws must be a string")
+        consent_id = message.get("consent_id")
+        if consent_id is not None:
+            if not isinstance(consent_id, str) or not consent_id.strip():
+                raise QueryError(400, "invalid_input", "message.consent_id must be a non-empty string")
+            if consent_jws is not None:
+                raise QueryError(400, "invalid_input", "send message.consent_jws or message.consent_id, not both")
         if not compiled.spec.consent.required:
             return {s.id: True for s in compiled.spec.sources}, {}
+        if consent_id is not None:
+            # A consent the subject gave and the Consent Manager holds: only the exchange CM
+            # can turn it into registry receipts (single-install support is to do).
+            if self.settings.consent_mode != "exchange":
+                raise QueryError(400, "consent_id_needs_exchange",
+                                 "message.consent_id needs the composite's exchange consent mode")
+            return None, {}
         if not consent_jws:
             raise QueryError(403, "consent_required", f"{compiled.ref} needs the subject's consent (message.consent_jws)")
         try:
@@ -316,10 +341,7 @@ class CompositeEngine:
             # No consent to exchange: registries get no consent (the partner's
             # own consent is not presented to a department registry).
             return {}, {}
-        base = (self.settings.exchange_cm_url or "").rstrip("/")
-        if not base:
-            raise QueryError(503, "consent_exchange_unavailable",
-                             "consent exchange is on but no exchange Consent Manager URL is configured")
+        base = self._exchange_base()
         body = {
             "consent_jws": message["consent_jws"],
             "partner_id": self.settings.composite_partner_id,
@@ -331,6 +353,11 @@ class CompositeEngine:
             # so each registry returns no other field.
             body["request_context"]["requested_scopes"] = requested_scopes(
                 decode_claims(message["consent_jws"]), compiled.spec.sources)
+        decision = await self._exchange_validate(base, body, request_id)
+        return self._receipts_and_preset(compiled, decision, granted)
+
+    async def _exchange_validate(self, base: str, body: Dict[str, Any], request_id: str) -> Dict[str, Any]:
+        """POST the exchange CM's /validate; a permit decision, or a QueryError."""
         try:
             response = await self._client().post(
                 f"{base}/consent/v1/validate", json=body, timeout=self.settings.exchange_cm_timeout_seconds
@@ -357,6 +384,16 @@ class CompositeEngine:
             detail = decision.get("detail")
             raise QueryError(403, "consent_denied",
                              f"the exchange Consent Manager denied the consent ({reason}{': ' + str(detail) if detail else ''})")
+        return decision
+
+    def _exchange_base(self) -> str:
+        base = (self.settings.exchange_cm_url or "").rstrip("/")
+        if not base:
+            raise QueryError(503, "consent_exchange_unavailable",
+                             "consent exchange is on but no exchange Consent Manager URL is configured")
+        return base
+
+    def _receipts_and_preset(self, compiled, decision, granted) -> Tuple[Dict[str, str], Dict[str, SourceResult]]:
         raw = decision.get("receipts")
         receipts = {
             str(c): r for c, r in (raw.items() if isinstance(raw, dict) else []) if isinstance(r, str) and r
@@ -378,6 +415,45 @@ class CompositeEngine:
                              f"the exchange Consent Manager issued no consent receipt for {sorted(set(missing_mandatory))}, "
                              "needed by this use case")
         return receipts, preset
+
+    async def _exchange_consent_by_id(
+        self, compiled: CompiledUseCase, message, subject, partner_id: str, request_id: str
+    ) -> Tuple[Dict[str, str], Dict[str, bool], Dict[str, SourceResult]]:
+        """A stored consent (message.consent_id) → receipts, per-source grant flags, preset results.
+
+        The exchange CM checks the consent (held by it, given by the subject: active, in its
+        validity, obtained by this partner, about this subject) and answers what it grants per
+        registry (``grants``); the use case's scope rules are then applied to that."""
+        body = {
+            "consent_id": message["consent_id"].strip(),
+            "consent_partner_id": partner_id,
+            "partner_id": self.settings.composite_partner_id,
+            "issue_receipts": True,
+            "request_context": {"subject_id": subject},
+        }
+        scopes = declared_scopes(compiled.spec.sources)
+        if scopes is not None:
+            body["request_context"]["requested_scopes"] = scopes
+        decision = await self._exchange_validate(self._exchange_base(), body, request_id)
+        raw = decision.get("grants")
+        grants = {
+            str(c): {str(x) for x in v} for c, v in (raw.items() if isinstance(raw, dict) else []) if isinstance(v, list)
+        }
+        granted = {src.id: src.controller in grants for src in compiled.spec.sources}
+        missing = sorted({src.controller for src in compiled.spec.sources
+                          if src.requirement == "mandatory" and not granted[src.id]})
+        if missing:
+            raise QueryError(403, "consent_grant_missing",
+                             f"the consent grants nothing for {missing}, needed by this use case")
+        gaps = scope_gaps_for(grants, compiled.spec.sources)
+        mandatory = {sid: m for sid, m in gaps.items() if compiled.sources[sid].requirement == "mandatory"}
+        if mandatory:
+            needed = sorted({x for m in mandatory.values() for x in m})
+            raise QueryError(403, "consent_scope_missing", f"the consent does not grant {needed}, needed by this use case")
+        receipts, preset = self._receipts_and_preset(compiled, decision, granted)
+        for sid, m in gaps.items():
+            preset[sid] = SourceResult(dci.DENIED, detail=f"not called: the consent does not grant {m}")
+        return receipts, granted, preset
 
     # ── running the sources ──────────────────────────────────────────────────
 

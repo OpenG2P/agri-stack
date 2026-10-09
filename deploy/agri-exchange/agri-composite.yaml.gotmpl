@@ -23,6 +23,8 @@ console:
 {{- end }}
 
 composite:
+  # The Consent Manager's partner portal reads the public use-case list from the browser.
+  corsAllowOrigins: {{ printf "https://consent-partner-portal.%s" (.Values.baseDomain | default (printf "%s.openg2p.org" .Values.namespace)) | quote }}
   # Department registries (data controller ID → partner DCI sync search URL).
   registries:
 {{- range $name, $url := .Values.registries }}

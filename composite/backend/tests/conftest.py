@@ -26,6 +26,13 @@ USE_CASES = os.path.abspath(os.path.join(HERE, "..", "..", "use-cases"))
 FR_URL = "http://fr.test/dci/registry/sync/search"
 CSR_URL = "http://csr.test/dci/registry/sync/search"
 PM_URL = "http://pm.test"
+# What the loan-profile use case's sources name (required and optional), per registry:
+# the default test consent grants all of them.
+SCOPES = {
+    "farmer-registry": [f"farmer-registry.{n}" for n in (
+        "farmer_identifiers", "personal_details", "land", "main_crops", "household_location", "land_location")],
+    "crop-sown-registry": [f"crop-sown-registry.{n}" for n in ("farmer_reference", "crop_season", "measures", "location")],
+}
 AUDIT_URL = "http://audit.test"
 
 FAN = "123456789012"

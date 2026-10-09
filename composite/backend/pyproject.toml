@@ -18,8 +18,13 @@ dependencies = [
   # The framework is installed from git in the Dockerfile (FASTAPI_COMMON_REF);
   # the partner-mgmt crypto backend it provides is on its develop line.
   "openg2p-fastapi-common",
+  # Staff login for the console (IAM, as in Master Data); installed from git in
+  # the Dockerfile (IAM_CORE_REF).
+  "iam-core",
+  # The console's call log (Postgres); unused while the console is off.
+  "asyncpg",
   # The framework imports sqlalchemy.ext.asyncio; SQLAlchemy 2.1 no longer
-  # pulls greenlet in by default (no database is used here).
+  # pulls greenlet in by default.
   "greenlet",
   # --no-control-socket in the Dockerfile CMD (the control socket would need a
   # writable home directory under a read-only root filesystem).
@@ -35,7 +40,7 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-test = ["pytest >=8", "pytest-asyncio >=0.23"]
+test = ["pytest >=8", "pytest-asyncio >=0.23", "aiosqlite"]
 
 [project.urls]
 Homepage = "https://openg2p.org"

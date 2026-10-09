@@ -187,12 +187,21 @@ class Run:
         d = r.json()
         self.purpose = self.a.purpose or d.get("purpose") or kit.DEFAULT_PURPOSE
         grants = d.get("consent_grants_needed") or list(kit.GRANTS)
-        self.controllers = [c for c in grants if c in kit.GRANTS]
+        # The use case says what the consent must (and may) grant per registry; the
+        # test grants both. A registry it lists no scopes for: the kit's test scopes.
+        declared = d.get("consent_scopes") or {}
+        self.scopes = {c: (declared[c]["required"] + declared[c]["optional"]) if c in declared else kit.GRANTS.get(c)
+                       for c in grants}
+        self.controllers = [c for c, s in self.scopes.items() if s]
         info(f"{d.get('use_case')} — {d.get('title')}; purpose {self.purpose}; "
-             f"sources {[s.get('id') for s in d.get('sources', [])]}; consent grants needed {grants}")
-        unknown = [c for c in grants if c not in kit.GRANTS]
-        if unknown:
-            warn(f"no test data scopes are known for {unknown}; the consent leaves them out")
+             f"sources {[s.get('id') for s in d.get('sources', [])]}")
+        for c in grants:
+            if c in declared:
+                info(f"  {c}: required {declared[c]['required']}, optional {declared[c]['optional']}")
+            elif self.scopes.get(c):
+                info(f"  {c}: the use case names no scopes; the kit's test scopes {self.scopes[c]}")
+            else:
+                warn(f"  {c}: no scopes known; the consent leaves it out")
 
     # 2. key ------------------------------------------------------------------
     def keys(self):
@@ -267,7 +276,7 @@ class Run:
     # 4. access ---------------------------------------------------------------
     def access(self):
         step(f"4. Consent Manager access for {self.a.partner}")
-        needed = {c: kit.policy_payload(c, self.purpose) for c in self.controllers}
+        needed = {c: kit.policy_payload(c, self.purpose, self.scopes[c]) for c in self.controllers}
         secret = os.environ.get("CM_ADMIN_CLIENT_SECRET")
         if not secret:
             # Like a partner, the script cannot see the CM's bindings without admin rights: it goes on
@@ -335,7 +344,8 @@ class Run:
         subject = {"type": self.a.subject_type, "value": self.a.fan}
         params = {k: v for k, v in (("crop_year", self.a.crop_year), ("season", self.a.season)) if v is not None}
         consent = kit.make_consent(self.key, partner=self.a.partner, kid=self.kid, subject=subject,
-                                   purpose=self.purpose, controllers=self.controllers, valid_days=1)
+                                   purpose=self.purpose, controllers=self.controllers, valid_days=1,
+                                   scopes=self.scopes)
         env = kit.build_query_envelope(self.key, partner=self.a.partner, kid=self.kid, composite=self.a.composite_id,
                                        subject=subject, parameters=params, consent_jws=consent)
         info(f"subject {self.a.subject_type} {mask(self.a.fan)}, parameters {params or '{}'}, "

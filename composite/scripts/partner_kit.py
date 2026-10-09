@@ -122,24 +122,28 @@ def binding_payload(audience: str, controller: str) -> dict:
             "name": f"TEST {audience} → {controller}"}
 
 
-def policy_payload(controller: str, purpose: str = DEFAULT_PURPOSE) -> dict:
-    """CM staff API body for PUT /consent/v1/partners/{id}/policy."""
-    return {"allowed_data_scopes": list(GRANTS[controller]), "allowed_purposes": [purpose],
+def policy_payload(controller: str, purpose: str = DEFAULT_PURPOSE, scopes=None) -> dict:
+    """CM staff API body for PUT /consent/v1/partners/{id}/policy (scopes: default GRANTS[controller])."""
+    return {"allowed_data_scopes": list(GRANTS[controller] if scopes is None else scopes), "allowed_purposes": [purpose],
             "allowed_subject_id_types": list(SUBJECT_ID_TYPES), "allowed_signing_algs": [SIGNING_ALG],
             "max_validity_duration": POLICY_MAX_VALIDITY, "fetch_type": "oneshot"}
 
 
 def make_consent(key, *, partner: str, kid: str, subject: dict, purpose: str = DEFAULT_PURPOSE,
-                 controllers=None, valid_days: float = 30, now=None) -> str:
-    """Partner-signed consent (compact JWS) with one grant per controller."""
+                 controllers=None, valid_days: float = 30, now=None, scopes=None) -> str:
+    """Partner-signed consent (compact JWS) with one grant per controller.
+
+    scopes: {controller: [scope IDs]} to grant (e.g. a use case's consent_scopes); default GRANTS."""
     now = now or datetime.now(timezone.utc)
-    controllers = list(GRANTS) if controllers is None else list(controllers)
+    grants_by_controller = GRANTS if scopes is None else scopes
+    controllers = list(grants_by_controller) if controllers is None else list(controllers)
     claims = {
         "jti": str(uuid.uuid4()),
         "aud": partner,
         "subject_id": dict(subject),
         "purpose": {"code": purpose},
-        "grants": [{"data_controller": c, "data_scopes": s} for c, s in GRANTS.items() if c in controllers],
+        "grants": [{"data_controller": c, "data_scopes": list(s)} for c, s in grants_by_controller.items()
+                   if c in controllers],
         "fetch_type": "oneshot",
         "validity": {"valid_from": now.isoformat(timespec="seconds"),
                      "valid_until": (now + timedelta(days=valid_days)).isoformat(timespec="seconds")},

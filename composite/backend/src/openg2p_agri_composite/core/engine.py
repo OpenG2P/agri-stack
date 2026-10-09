@@ -21,7 +21,7 @@ import httpx
 
 from . import dci
 from .audit import AuditEmitter
-from .consent import ConsentError, check_consent, decode_claims
+from .consent import ConsentError, check_consent, decode_claims, requested_scopes, scope_gaps
 from .crypto import CompositeCrypto
 from .expr import evaluate, set_path
 from .loader import CompiledUseCase, UseCaseRegistry
@@ -82,6 +82,7 @@ class CompositeEngine:
         client_getter: Callable[[], httpx.AsyncClient],
         audit: Optional[AuditEmitter] = None,
         limiter: Optional[RateLimiter] = None,
+        activity=None,
     ):
         self.settings = settings
         self.registry = registry
@@ -89,6 +90,8 @@ class CompositeEngine:
         self._client = client_getter
         self.audit = audit or AuditEmitter("", client_getter)
         self.limiter = limiter or RateLimiter()
+        # The console's call log (core.activity.ActivityStore); None or disabled → not recorded.
+        self.activity = activity
 
     # ── partner-facing entry point ───────────────────────────────────────────
 
@@ -107,10 +110,11 @@ class CompositeEngine:
             message = body["message"]
             parameters = self._validate_parameters(compiled, message.get("parameters"))
             self._rate_limit(compiled, partner_id)
-            granted = await self._check_consent(compiled, message, subject, partner_id)
-            receipts, preset = None, None
+            granted, preset = await self._check_consent(compiled, message, subject, partner_id)
+            receipts = None
             if self.settings.consent_mode == "exchange":
-                receipts, preset = await self._exchange_consent(compiled, message, subject, granted, request_id)
+                receipts, exchange_preset = await self._exchange_consent(compiled, message, subject, granted, request_id)
+                preset = {**exchange_preset, **preset}
             self._emit(compiled, "request", request_id, partner_id, "success")
             statuses = await self.run_sources(
                 compiled, subject, parameters, message.get("consent_jws"), partner_id, request_id, granted,
@@ -159,6 +163,13 @@ class CompositeEngine:
                 compiled, "response", request_id, partner_id, outcome, reason,
                 {"http_status": http_status, "duration_ms": duration,
                  "sources": {sid: r.status for sid, r in statuses.items()}},
+            )
+        if self.activity is not None:
+            self.activity.record(
+                request_id=request_id, use_case=compiled.ref if compiled else use_case_ref,
+                partner_id=partner_id if isinstance(partner_id, str) else None,
+                http_status=500 if envelope is None else http_status, outcome=outcome, reason=reason,
+                duration_ms=duration, sources={sid: r.status for sid, r in statuses.items()},
             )
         if envelope is None:  # could not sign
             return 500, {
@@ -248,12 +259,19 @@ class CompositeEngine:
         if rate and not self.limiter.allow(partner_id, compiled.ref, *rate):
             raise QueryError(429, "rate_limited", f"more than {compiled.spec.limits.rate_per_partner} for {compiled.ref}")
 
-    async def _check_consent(self, compiled: CompiledUseCase, message, subject, partner_id) -> Dict[str, bool]:
+    async def _check_consent(
+        self, compiled: CompiledUseCase, message, subject, partner_id
+    ) -> Tuple[Dict[str, bool], Dict[str, SourceResult]]:
+        """({source_id: the consent grants its registry}, {source_id: preset result}).
+
+        A source that declares scopes needs the consent to grant every one of its
+        required scopes: a mandatory one fails the request, an optional one is
+        denied (not called)."""
         consent_jws = message.get("consent_jws")
         if consent_jws is not None and not isinstance(consent_jws, str):
             raise QueryError(400, "invalid_input", "message.consent_jws must be a string")
         if not compiled.spec.consent.required:
-            return {s.id: True for s in compiled.spec.sources}
+            return {s.id: True for s in compiled.spec.sources}, {}
         if not consent_jws:
             raise QueryError(403, "consent_required", f"{compiled.ref} needs the subject's consent (message.consent_jws)")
         try:
@@ -263,9 +281,20 @@ class CompositeEngine:
         if not await self.crypto.verify_compact(consent_jws, partner_id):
             raise QueryError(403, "consent_signature_invalid", "the consent signature does not verify against the partner's key")
         try:
-            return check_consent(claims, subject, compiled.spec.sources)
+            granted = check_consent(claims, subject, compiled.spec.sources)
         except ConsentError as e:
             raise QueryError(403, e.code, e.message) from None
+        gaps = scope_gaps(claims, compiled.spec.sources)
+        mandatory = {sid: missing for sid, missing in gaps.items() if compiled.sources[sid].requirement == "mandatory"}
+        if mandatory:
+            needed = sorted({s for missing in mandatory.values() for s in missing})
+            raise QueryError(403, "consent_scope_missing",
+                             f"the consent does not grant {needed}, needed by this use case")
+        preset = {
+            sid: SourceResult(dci.DENIED, detail=f"not called: the consent does not grant {missing}")
+            for sid, missing in gaps.items()
+        }
+        return granted, preset
 
     async def _exchange_consent(
         self, compiled: CompiledUseCase, message, subject, granted: Dict[str, bool], request_id: str
@@ -294,6 +323,11 @@ class CompositeEngine:
             "issue_receipts": True,
             "request_context": {"subject_id": subject},
         }
+        if any(src.scopes or src.optional_scopes for src in compiled.spec.sources):
+            # Receipts carry only the scopes this use case asks for (CM: granted ∩ policy ∩ requested),
+            # so each registry returns no other field.
+            body["request_context"]["requested_scopes"] = requested_scopes(
+                decode_claims(message["consent_jws"]), compiled.spec.sources)
         try:
             response = await self._client().post(
                 f"{base}/consent/v1/validate", json=body, timeout=self.settings.exchange_cm_timeout_seconds

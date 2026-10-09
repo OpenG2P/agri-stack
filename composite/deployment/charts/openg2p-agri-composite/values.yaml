@@ -15,6 +15,14 @@ global:
   # Audit Manager base URL (CloudEvents). Empty => auditing off.
   auditManagerUrl: 'http://commons-services-auditmanager:80'
 
+  # ── Console (used only when console.enabled) ──────────────────────────────
+  # Public hostname of the staff console (Istio internal gateway).
+  consoleHostname: 'agri-composite-console.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  # Public IAM staff API (the browser logs in through it), as commons serves it.
+  staffIamHostname: 'staff-iam.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  # Parent domain of the staff login cookies, shared with the IAM staff API.
+  consoleCookieDomain: '.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+
 composite:
   enabled: true
   nameOverride: api
@@ -149,13 +157,13 @@ composite:
       # depend on the farmer source and read FARMER_ID from its record (or use the
       # subject itself when the partner sends a FARMER_ID).
       #
-      # Consent (one consent, a grant per registry) names each registry's data scopes:
-      # scope IDs <registry>.<name> from the registry's catalogue (signed POST /partner/data_scopes).
-      # The Farmer Registry grant must include farmer-registry.farmer_identifiers: the
-      # farmer ID the crop sources query by is read from it. The partner kit grants:
-      #   farmer-registry:    farmer_identifiers, personal_details, household_location,
-      #                       land, land_location, main_crops
-      #   crop-sown-registry: farmer_reference, crop_season, measures, location
+      # Each source names the registry's data scopes it uses (IDs <registry>.<name>, from
+      # the registry's catalogue, signed POST /partner/data_scopes): the partner's consent
+      # must grant every one of `scopes` (else: a mandatory source fails the request, an
+      # optional one is not called) and may grant `optional_scopes` (left out: their
+      # fields come back null). The composite asks for no other scope. GET the use case
+      # for the per-registry list (consent_scopes). farmer-registry.farmer_identifiers is
+      # required: the farmer ID the crop sources query by is read from it.
       #
       # Template note: keep a space between consecutive braces ("} }", "{ {") so
       # literal JSON never reads as a Jinja "{{ … }}".
@@ -197,6 +205,9 @@ composite:
         - id: farmer
           controller: farmer-registry
           requirement: mandatory
+          scopes: [farmer-registry.farmer_identifiers, farmer-registry.personal_details,
+                   farmer-registry.land, farmer-registry.main_crops]
+          optional_scopes: [farmer-registry.household_location, farmer-registry.land_location]
           dci:
             reg_type: Farmer
             reg_record_type: spdci-extensions-dci:Farmer
@@ -213,6 +224,9 @@ composite:
           controller: crop-sown-registry
           requirement: optional
           depends_on: [farmer]
+          scopes: [crop-sown-registry.farmer_reference, crop-sown-registry.crop_season,
+                   crop-sown-registry.measures]
+          optional_scopes: [crop-sown-registry.location]
           dci:
             reg_type: CropSown
             reg_record_type: spdci-extensions-agri:ActivityAggregate
@@ -241,6 +255,9 @@ composite:
           controller: crop-sown-registry
           requirement: optional
           depends_on: [farmer]
+          scopes: [crop-sown-registry.farmer_reference, crop-sown-registry.crop_season,
+                   crop-sown-registry.measures]
+          optional_scopes: [crop-sown-registry.location]
           dci:
             reg_type: CropSown
             reg_record_type: spdci-extensions-agri:CropSeason
@@ -362,6 +379,262 @@ composite:
     periodSeconds: 10
     timeoutSeconds: 5
     failureThreshold: 6
+
+# ── Console (read-only staff console) ───────────────────────────────────────
+# Off by default: nothing below is rendered and the API runs as before (partner
+# API only, no database, no IAM). On:
+#   - the API gets the admin API (/composite/v1/admin) with IAM staff login and
+#     a Postgres database for its call log (AGRI_COMPOSITE_CONSOLE_* / DB_* /
+#     AUTH_* env, see agriComposite.consoleApiEnv in _helpers.tpl);
+#   - the console UI (Next.js) is deployed at global.consoleHostname;
+#   - a Job creates the database and its user in the shared commons Postgres
+#     (password kept in the db.secretName Secret, generated once);
+#   - a Job creates the Keycloak client (keycloakInit) and another registers the
+#     console in IAM (iamRegister) so admins can grant its roles there.
+console:
+  enabled: false
+
+  # ── IAM (staff login; same iam-core settings as Master Data's API) ────────
+  iam:
+    # IAM staff portal API inside the cluster (login, permission resolution).
+    providerApiUrl: http://commons-services-iam-staff-portal-api
+    # The same API as the browser reaches it (console UI login).
+    publicUrl: 'https://{{ tpl .Values.global.staffIamHostname $ }}'
+    # Redis of the IAM staff portal API (refresh-token / login transaction store).
+    redisUrl: redis://commons-redis-master:6379/0
+    transactionStoreBackend: redis
+    # Keycloak client of the console in the staff realm. Also its IAM
+    # application mnemonic (IAM requires the two to match).
+    keycloakClientId: agri-composite
+    # IAM login provider the console UI offers (IAM's login_providers id).
+    loginProviderId: "1"
+    cookieDomain: '{{ tpl .Values.global.consoleCookieDomain $ }}'
+    # Double-submit CSRF on state-changing admin requests.
+    csrfEnabled: true
+
+  # Links shown in the console.
+  pmPortalUrl: 'https://partner-management.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  cmPortalUrl: 'https://consent-manager.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  # Call log rows older than this are deleted (0 keeps everything).
+  activityRetentionDays: 90
+  # Registry data scope catalogues are cached this long (seconds).
+  catalogueCacheSeconds: 300
+  # Extra API env when the console is on (templated literals), e.g. DB pool sizes.
+  apiEnvVars: {}
+  #   AGRI_COMPOSITE_DB_POOL_SIZE: "5"
+
+  # ── Database (the console's call log) in the shared commons Postgres ──────
+  db:
+    driver: postgresql+asyncpg
+    hostname: commons-postgresql
+    port: 5432
+    dbname: agri_composite
+    user: agri_composite_user
+    # Secret holding the user's password (key passwordKey).
+    secretName: agri-composite-db
+    passwordKey: agri-composite-db-user
+    # true: the chart creates the Secret with a random password once and keeps
+    # it (also across uninstall). false: create it yourself before installing.
+    createSecret: true
+    # API pods wait (init container) up to timeoutSeconds until they can log in
+    # to the database, so the console finds it on first install. On timeout the
+    # pod starts anyway (the partner API never waits on the console's database).
+    waitForDb:
+      enabled: true
+      timeoutSeconds: 180
+      image:
+        repository: jbergknoff/postgresql-client
+        tag: latest
+        pullPolicy: IfNotPresent
+    # Job (regular resource, every install/upgrade) creating the database and
+    # user with the Postgres superuser; idempotent (re-syncs the password).
+    pgInit:
+      enabled: true
+      # The postgres-init image, fed the same env as the postgres-init chart.
+      image:
+        repository: openg2p/postgres-init
+        tag: "1.2.0"
+        pullPolicy: IfNotPresent
+      adminUser: postgres
+      adminSecret: commons-postgresql
+      adminSecretPasswordKey: postgres-password
+      extensions: []
+      backoffLimit: 4
+      ttlSecondsAfterFinished: 600
+
+  # ── Keycloak (commons) ─────────────────────────────────────────────────────
+  keycloak:
+    # In-cluster Keycloak URL (admin API for keycloakInit; token for iamRegister).
+    url: http://commons-keycloak:80
+    realm: staff
+    adminUser: admin
+    adminSecret: commons-keycloak
+    adminSecretPasswordKey: admin-password
+
+  # Job (regular resource) creating the console's confidential Keycloak client
+  # (iam.keycloakClientId) with the client roles below, and its client secret
+  # Secret (generated once, kept). Idempotent. Same image as keycloak-init.
+  keycloakInit:
+    enabled: true
+    # The keycloak-init image (as the keycloak-init chart runs it: INPUT_FILE
+    # clients.yaml, client secret under /secrets/<clientId>).
+    image:
+      repository: openg2p/keycloak-init
+      tag: "1.2.0"
+      pullPolicy: IfNotPresent
+    clientName: Agri Stack Composite Console
+    # Secret with key client_secret (used by iamRegister).
+    clientSecretName: '{{ tpl .Values.console.iam.keycloakClientId $ }}-keycloak-client'
+    # Must match the role mnemonics in files/iam-registration/payload.json.
+    clientRoles:
+      - AGRI_COMPOSITE_ADMIN
+      - AGRI_COMPOSITE_VIEWER
+    # Existing staff-realm users given AGRI_COMPOSITE_ADMIN (commons creates admin).
+    adminUsers:
+      - admin
+    backoffLimit: 3
+    ttlSecondsAfterFinished: 600
+
+  # ── IAM registration (application tile + permissions + roles) ─────────────
+  # Pushes files/iam-registration/payload.json to the IAM staff portal API.
+  iamRegister:
+    enabled: true
+    # true: run as a Helm post-install/post-upgrade hook (standalone installs).
+    # false: run as a regular resource -- set this in umbrella charts / helmfiles,
+    # where one failing hook stops every later hook and Rancher may skip hooks.
+    # The Job name carries the release revision either way.
+    runAsHook: true
+    applicationMnemonic: '{{ tpl .Values.console.iam.keycloakClientId $ }}'
+    applicationUrl: 'https://{{ tpl .Values.global.consoleHostname $ }}'
+    applicationDescription: "Agri Stack Composite"
+    image:
+      repository: curlimages/curl
+      tag: "8.11.1"
+      pullPolicy: IfNotPresent
+    backoffLimit: 5
+    tokenMaxAttempts: 30
+    registerMaxAttempts: 10
+    ttlSecondsAfterFinished: 600
+    annotations:
+      "helm.sh/hook": post-install,post-upgrade
+      "helm.sh/hook-weight": "20"
+      "helm.sh/hook-delete-policy": before-hook-creation
+    payloadAnnotations:
+      "helm.sh/hook": post-install,post-upgrade
+      "helm.sh/hook-weight": "19"
+      "helm.sh/hook-delete-policy": before-hook-creation
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+
+  # ── Console UI (Next.js standalone) ───────────────────────────────────────
+  ui:
+    nameOverride: console
+    hostname: '{{ tpl .Values.global.consoleHostname $ }}'
+
+    replicaCount: 1
+    autoscaling:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 3
+      targetCPUUtilizationPercentage: 80
+      targetMemoryUtilizationPercentage: null
+    updateStrategy:
+      type: RollingUpdate
+    serviceAccount:
+      create: false
+      name: ""
+
+    image:
+      repository: openg2p/openg2p-agri-composite-ui
+      # Placeholder: CI injects the version at package time.
+      tag: "develop"
+      pullPolicy: Always
+
+    # The image runs as uid 1001 (nextjs); the root filesystem is read-only with
+    # emptyDirs at /tmp and /app/.next/cache (Next.js runtime cache).
+    podSecurityContext:
+      enabled: true
+      runAsNonRoot: true
+      runAsUser: 1001
+      runAsGroup: 1001
+      fsGroup: 1001
+      seccompProfile:
+        type: RuntimeDefault
+    containerSecurityContext:
+      enabled: true
+      runAsNonRoot: true
+      runAsUser: 1001
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: ["ALL"]
+
+    containerPort: 3000
+    service:
+      type: ClusterIP
+      port: 80
+      externalTrafficPolicy: Cluster
+
+    istio:
+      enabled: true
+      virtualservice:
+        enabled: true
+        host: '{{ tpl .Values.global.consoleHostname $ }}'
+        gateway: "internal"
+        destination: '{{ .Release.Name }}-console'
+        destinationPort: 80
+        prefix: /
+        rewriteUri: ""
+      gateway:
+        enabled: false
+
+    envVars:
+      # The composite API service in this release (server-side proxy target).
+      BACKEND_URL: 'http://{{ .Release.Name }}-api'
+      IAM_URL: '{{ tpl .Values.console.iam.publicUrl $ }}'
+      LOGIN_PROVIDER_ID: '{{ .Values.console.iam.loginProviderId }}'
+      APPLICATION_MNEMONIC: '{{ tpl .Values.console.iam.keycloakClientId $ }}'
+      COOKIE_DOMAIN: '{{ tpl .Values.console.iam.cookieDomain $ }}'
+      DEFAULT_LOCALE: en
+      NODE_ENV: production
+    envVarsFrom: {}
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 192Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    startupProbe:
+      enabled: true
+      httpGet:
+        path: /
+        port: http
+      periodSeconds: 5
+      timeoutSeconds: 5
+      failureThreshold: 30
+    livenessProbe:
+      enabled: true
+      httpGet:
+        path: /
+        port: http
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 6
+    readinessProbe:
+      enabled: true
+      httpGet:
+        path: /
+        port: http
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 6
 
 # ── Sanity (post-install / post-upgrade hook) ───────────────────────────────
 # Pings the API and lists the published use cases, using the API image itself

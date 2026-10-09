@@ -45,7 +45,12 @@ def test_sample_loads_and_describes():
         (lambda r: r["input"].update(batch={"max_subjects": 5}), "max_subjects"),
         (lambda r: r["sources"][1].update(depends_on=["nobody"]), "unknown source 'nobody'"),
         (lambda r: r["sources"][1].update(requirement="sometimes"), "requirement"),
-        (lambda r: r["sources"][0].update(controller="livestock-registry"), "no registry endpoint configured"),
+        (lambda r: r["sources"][0].update(controller="livestock-registry", scopes=[], optional_scopes=[]),
+         "no registry endpoint configured"),
+        (lambda r: r["sources"][0].update(scopes=["crop-sown-registry.measures"]),
+         "are not scopes of its registry 'farmer-registry'"),
+        (lambda r: r["sources"][0].update(optional_scopes=["farmer-registry.land"]),
+         "are both in scopes and optional_scopes"),
         (lambda r: r["sources"][0]["dci"].update(query_template="{\"query\": 1}"), "query: {type, value}"),
         (lambda r: r["sources"][0]["dci"].update(query_template="{% if %}"), "does not compile"),
         (lambda r: r["sources"][0]["dci"].update(query_template="not json"), "not JSON"),
@@ -85,13 +90,33 @@ def test_design_keys_accepted_but_not_enforced():
     raw = sample()
     raw["owner"] = "agri-stack-platform"
     raw["consent"].update(collection="cm-originated", mode="single")
-    raw["sources"][0]["request_scopes"] = ["farmer:profile"]
     raw["response"].update(schema="schemas/x.json", correlate_on="subject", mode="merged")
     raw["execution"]["fan_out"] = "parallel"
     raw["limits"]["daily_quota_per_partner"] = 100
     raw["audit"] = {"events": ["request", "response"]}
     c = compile_raw(raw)
-    assert set(c.spec.not_enforced_keys()) >= {"owner", "consent.collection", "sources[].request_scopes"}
+    assert set(c.spec.not_enforced_keys()) >= {"owner", "consent.collection"}
+
+
+def test_request_scopes_is_the_earlier_name_of_scopes():
+    raw = sample()
+    src = raw["sources"][0]
+    src["request_scopes"] = src.pop("scopes")
+    c = compile_raw(raw)
+    assert c.spec.sources[0].scopes == raw["sources"][0]["request_scopes"]
+    assert "sources[].request_scopes" not in c.spec.not_enforced_keys()
+
+
+def test_consent_scopes_per_registry():
+    c = compile_raw(sample())
+    scopes = c.spec.consent_scopes()
+    assert scopes["farmer-registry"]["required"] == sorted(
+        f"farmer-registry.{n}" for n in ("farmer_identifiers", "personal_details", "land", "main_crops"))
+    assert scopes["farmer-registry"]["optional"] == ["farmer-registry.household_location", "farmer-registry.land_location"]
+    assert scopes["crop-sown-registry"]["optional"] == ["crop-sown-registry.location"]
+    described = c.describe()
+    assert described["consent_scopes"] == scopes
+    assert described["sources"][0]["scopes"] == c.spec.sources[0].scopes
 
 
 def test_parse_ref():

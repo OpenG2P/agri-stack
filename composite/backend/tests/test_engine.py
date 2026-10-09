@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 import yaml
-from conftest import AUDIT_URL, CSR_URL, FAN, FARMER_ID, FR_URL, PM_URL, canonical, dci_response
+from conftest import AUDIT_URL, CSR_URL, FAN, FARMER_ID, FR_URL, PM_URL, SCOPES, canonical, dci_response
 from jwt import PyJWS
 from openg2p_agri_composite.core.audit import AuditEmitter
 from openg2p_agri_composite.core.crypto import build_composite_crypto
@@ -65,7 +65,7 @@ class Harness:
             "aud": "bank-a",
             "subject_id": subject or {"type": "FAYDA_FAN", "value": FAN},
             "purpose": {"code": "credit-assessment"},
-            "grants": [{"data_controller": c, "data_scopes": ["x"]} for c in controllers],
+            "grants": [{"data_controller": c, "data_scopes": list(SCOPES[c])} for c in controllers],
             "fetch_type": "oneshot",
             "validity": {"valid_from": (now - timedelta(hours=1)).isoformat(),
                          "valid_until": (now + timedelta(days=30)).isoformat()},
@@ -273,10 +273,42 @@ async def test_consent_without_grant_for_mandatory_source(h):
 
 
 async def test_legacy_single_controller_consent(h):
-    consent = h.consent(controllers=(), grants=None, data_controller="farmer-registry", data_scopes=["x"])
+    consent = h.consent(controllers=(), grants=None, data_controller="farmer-registry",
+                        data_scopes=list(SCOPES["farmer-registry"]))
     status, body = await h.query(h.envelope(consent=consent))
     assert status == 200, body
     assert body["message"]["sources"]["crop_seasons"]["status"] == "denied"
+
+
+async def test_consent_missing_a_required_scope_of_a_mandatory_source_fails(h):
+    grants = [{"data_controller": "farmer-registry", "data_scopes": ["farmer-registry.personal_details"]},
+              {"data_controller": "crop-sown-registry", "data_scopes": list(SCOPES["crop-sown-registry"])}]
+    status, body = await h.query(h.envelope(consent=h.consent(grants=grants)))
+    assert status == 403 and body["message"]["error"]["code"] == "consent_scope_missing"
+    assert "farmer-registry.farmer_identifiers" in body["message"]["error"]["message"]
+    assert h.registries.calls == []
+
+
+async def test_consent_missing_a_required_scope_of_an_optional_source_skips_it(h):
+    grants = [{"data_controller": "farmer-registry", "data_scopes": list(SCOPES["farmer-registry"])},
+              {"data_controller": "crop-sown-registry", "data_scopes": ["crop-sown-registry.location"]}]
+    status, body = await h.query(h.envelope(consent=h.consent(grants=grants)))
+    assert status == 200, body
+    srcs = body["message"]["sources"]
+    assert srcs["farmer"]["status"] == "ok"
+    for sid in ("season_summaries", "crop_seasons"):
+        assert srcs[sid]["status"] == "denied" and "crop-sown-registry.farmer_reference" in srcs[sid]["detail"]
+    assert h.registries.calls_to(CSR_URL) == []
+    assert body["message"]["data"]["crops"]["seasons"] is None
+
+
+async def test_optional_scopes_may_be_left_out(h):
+    required = {"farmer-registry": ["farmer_identifiers", "personal_details", "land", "main_crops"],
+                "crop-sown-registry": ["farmer_reference", "crop_season", "measures"]}
+    grants = [{"data_controller": c, "data_scopes": [f"{c}.{n}" for n in names]} for c, names in required.items()]
+    status, body = await h.query(h.envelope(consent=h.consent(grants=grants)))
+    assert status == 200, body
+    assert all(s["status"] == "ok" for s in body["message"]["sources"].values()), body["message"]["sources"]
 
 
 async def test_optional_source_unavailable_gives_partial_response(h):

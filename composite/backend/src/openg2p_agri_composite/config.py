@@ -1,6 +1,6 @@
 from typing import Dict, Literal
 
-from openg2p_fastapi_common.config import Settings as BaseSettings
+from iam_core.user_auth.config import Settings as IamSettings
 from pydantic import BaseModel
 from pydantic_settings import SettingsConfigDict
 
@@ -18,10 +18,18 @@ class RegistryEndpoint(BaseModel):
     url: str  # DCI sync search URL, e.g. http://fr-partner-api/dci/registry/sync/search
     partner_id: str = ""
     receiver_id: str = ""  # header.receiver_id sent to it; defaults to the controller ID
+    # Its data scope catalogue (signed POST); empty → the search URL with /dci/... → /partner/data_scopes.
+    catalogue_url: str = ""
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="agri_composite_", env_file=".env", extra="allow")
+class Settings(IamSettings):
+    """The composite's settings. The IAM (staff login) fields come from iam-core's
+    Settings, read from AGRI_COMPOSITE_* like the rest; they matter only when the
+    console is on (``console_enabled``)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="agri_composite_", env_file=".env", extra="allow", env_nested_delimiter="__"
+    )
 
     openapi_title: str = "OpenG2P Agri Stack Composite"
     openapi_description: str = """
@@ -29,13 +37,28 @@ class Settings(BaseSettings):
 
         Serves approved use cases (configuration, not code) by querying several
         registries over DCI with the partner's consent and returning one signed
-        response. Nothing is stored.
+        response. No partner data is stored (the console's call log holds
+        outcomes and timings only).
         """
     openapi_version: str = __version__
 
-    # No database. The base Settings would otherwise build a datasource URL from
-    # its defaults; the Initializer also skips init_db.
+    # No database unless the console is on. "none://" stops the base Settings
+    # building a datasource URL from its defaults; set AGRI_COMPOSITE_DB_DATASOURCE
+    # (or "" plus the DB_* parts) for the console's call log.
     db_datasource: str = "none://"
+
+    # ── Console (staff admin API under /composite/v1/admin, IAM login) ─────────
+    # Off: no admin routes, no IAM middleware, no database — the partner API only.
+    # On: needs a database (the call log), the IAM staff API
+    # (auth_provider_api_url), Redis (auth_redis_url) and keycloak_client_id.
+    console_enabled: bool = False
+    # Portal links shown in the console (Partner Management, Consent Manager).
+    console_pm_portal_url: str = ""
+    console_cm_portal_url: str = ""
+    # Call log rows older than this are deleted (0 keeps everything).
+    activity_retention_days: int = 90
+    # Registry data scope catalogues are cached this long (seconds).
+    catalogue_cache_seconds: int = 300
 
     # ── Use cases ─────────────────────────────────────────────────────────────
     # Directory of use-case YAML files (a Helm-mounted ConfigMap in a cluster).

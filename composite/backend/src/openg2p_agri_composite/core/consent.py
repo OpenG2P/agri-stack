@@ -14,7 +14,7 @@ authority (each registry validates its own grant).
 import base64
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 
 class ConsentError(Exception):
@@ -52,6 +52,47 @@ def granted_controllers(claims: Dict[str, Any]) -> Set[str]:
     if claims.get("data_controller"):
         return {str(claims["data_controller"])}
     raise ConsentError("consent_malformed", "consent has neither 'grants' nor 'data_controller'")
+
+
+def granted_scopes(claims: Dict[str, Any]) -> Dict[str, Set[str]]:
+    """{controller: scope IDs} the consent grants (a legacy consent is one grant)."""
+    grants = claims.get("grants")
+    if grants is None and claims.get("data_controller"):
+        grants = [{"data_controller": claims["data_controller"], "data_scopes": claims.get("data_scopes")}]
+    out: Dict[str, Set[str]] = {}
+    for g in grants if isinstance(grants, list) else []:
+        if isinstance(g, dict) and g.get("data_controller"):
+            scopes = g.get("data_scopes")
+            out.setdefault(str(g["data_controller"]), set()).update(
+                str(x) for x in (scopes if isinstance(scopes, list) else []))
+    return out
+
+
+def scope_gaps(claims: Dict[str, Any], sources) -> Dict[str, List[str]]:
+    """{source_id: required scopes the consent does not grant}, for sources that
+    declare scopes and whose registry the consent does grant (a registry with no
+    grant at all is the grant check's business)."""
+    granted = granted_scopes(claims)
+    gaps: Dict[str, List[str]] = {}
+    for src in sources:
+        if src.scopes and src.controller in granted:
+            missing = sorted(set(src.scopes) - granted[src.controller])
+            if missing:
+                gaps[src.id] = missing
+    return gaps
+
+
+def requested_scopes(claims: Dict[str, Any], sources) -> List[str]:
+    """The scopes to ask for: each source's declared scopes (required and optional),
+    and, for a registry none of whose sources declares any, all its granted ones."""
+    granted = granted_scopes(claims)
+    declared: Dict[str, Set[str]] = {}
+    for src in sources:
+        declared.setdefault(src.controller, set()).update(src.scopes, src.optional_scopes)
+    out: Set[str] = set()
+    for controller, scopes in declared.items():
+        out |= scopes if scopes else granted.get(controller, set())
+    return sorted(out)
 
 
 def _parse_ts(value) -> Optional[datetime]:

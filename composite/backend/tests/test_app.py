@@ -20,7 +20,7 @@ def test_app_end_to_end(tmp_path, composite_p12):
         from datetime import datetime, timezone
         import httpx
         sys.path.insert(0, {os.path.dirname(__file__)!r})
-        from conftest import Key, RegistryStub, FR_URL, CSR_URL, FAN
+        from conftest import Key, RegistryStub, FR_URL, CSR_URL, FAN, SCOPES
 
         partner = Key("k1")
         from openg2p_agri_composite.services import composite_service as cs
@@ -51,8 +51,7 @@ def test_app_end_to_end(tmp_path, composite_p12):
                 now = datetime.now(timezone.utc).isoformat()
                 consent = partner.sign_compact({{"jti": "j", "aud": "bank-a", "subject_id": {{"type": "FAYDA_FAN", "value": FAN}},
                     "purpose": {{"code": "credit-assessment"}}, "issued_at": now,
-                    "grants": [{{"data_controller": "farmer-registry", "data_scopes": []}},
-                               {{"data_controller": "crop-sown-registry", "data_scopes": []}}]}})
+                    "grants": [{{"data_controller": c, "data_scopes": s}} for c, s in SCOPES.items()]}})
                 message = {{"subject": {{"type": "FAYDA_FAN", "value": FAN}}, "parameters": {{"crop_year": 2019}}, "consent_jws": consent}}
                 env = {{"signature": partner.sign_detached({{"header": header, "message": message}}), "header": header, "message": message}}
                 r = await c.post("/composite/v1/use-cases/loan-profile/query", json=env)

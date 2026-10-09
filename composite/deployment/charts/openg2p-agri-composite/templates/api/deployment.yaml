@@ -29,6 +29,9 @@ spec:
       {{- if and .Values.podSecurityContext .Values.podSecurityContext.enabled }}
       securityContext: {{- include "common.tplvalues.render" (dict "value" (omit .Values.podSecurityContext "enabled") "context" $) | nindent 8 }}
       {{- end }}
+      {{- if and $.Values.console.enabled $.Values.console.db.waitForDb.enabled }}
+      initContainers: {{- include "agriComposite.consoleWaitForDb" (dict "root" $ "securityContext" (and .Values.containerSecurityContext .Values.containerSecurityContext.enabled (omit .Values.containerSecurityContext "enabled"))) | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ include "common.names.name" . }}
           image: {{ include "common.images.image" (dict "imageRoot" .Values.image "global" .Values.global) }}
@@ -37,6 +40,9 @@ spec:
           securityContext: {{- include "common.tplvalues.render" (dict "value" (omit .Values.containerSecurityContext "enabled") "context" $) | nindent 12 }}
           {{- end }}
           env: {{- include "agriComposite.envVars" . | nindent 12 }}
+            {{- if $.Values.console.enabled }}
+            {{- include "agriComposite.consoleApiEnv" $ | nindent 12 }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.containerPort }}

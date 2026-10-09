@@ -5,7 +5,7 @@ import json
 
 import httpx
 import pytest
-from conftest import CSR_URL, FR_URL
+from conftest import CSR_URL, FR_URL, SCOPES
 from test_engine import Harness
 
 CM_URL = "http://exchange-cm.test"
@@ -73,8 +73,18 @@ async def test_exchange_sends_each_registry_its_receipt(x):
     assert req["issue_receipts"] is True
     assert req["partner_id"] == "agri-composite"
     assert req["request_context"]["subject_id"] == env["message"]["subject"]
+    # receipts carry only the use case's scopes (required and optional), nothing else the consent grants
+    assert req["request_context"]["requested_scopes"] == sorted(s for scopes in SCOPES.values() for s in scopes)
     assert [authorize(c)["consent_jws"] for c in x.registries.calls_to(FR_URL)] == ["fr.receipt.jws"]
     assert [authorize(c)["consent_jws"] for c in x.registries.calls_to(CSR_URL)] == ["csr.receipt.jws"] * 2
+
+
+async def test_exchange_never_asks_for_scopes_beyond_the_use_case(x):
+    grants = [{"data_controller": c, "data_scopes": list(s) + [f"{c}.extra"]} for c, s in SCOPES.items()]
+    status, body = await x.query(x.envelope(consent=x.consent(grants=grants)))
+    assert status == 200, body
+    requested = x.cm.calls[0][1]["request_context"]["requested_scopes"]
+    assert not [s for s in requested if s.endswith(".extra")]
 
 
 async def test_exchange_partner_checks_still_run_first(x, partner_key):

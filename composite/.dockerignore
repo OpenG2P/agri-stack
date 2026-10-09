@@ -6,3 +6,5 @@ deployment
 scripts
 *.p12
 *.pem
+ui/node_modules
+ui/.next

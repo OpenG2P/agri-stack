@@ -9,9 +9,10 @@ _config = Settings.get_config()
 
 from fastapi import FastAPI
 from openg2p_fastapi_common.app import Initializer as BaseInitializer
+from openg2p_fastapi_common.context import dbengine
 
 from .controllers.use_case_controller import UseCaseController
-from .services.composite_service import CompositeService
+from .services.composite_service import CompositeService, console_active
 
 _logger = logging.getLogger(_config.logging_default_logger_name)
 
@@ -21,6 +22,13 @@ class Initializer(BaseInitializer):
         super().initialize(**kwargs)
         CompositeService()
         UseCaseController().post_init()
+        if console_active():
+            from .controllers.admin_controller import AdminController
+
+            AdminController().post_init()
+        elif _config.console_enabled:
+            _logger.error("The console is on but no database is configured (AGRI_COMPOSITE_DB_*); "
+                          "the console stays off")
 
     def init_logger(self):
         app_logger = super().init_logger()
@@ -35,11 +43,14 @@ class Initializer(BaseInitializer):
         return app_logger
 
     def init_db(self):
-        # Stateless service: no database engine.
-        return None
+        # The partner API is stateless: a database only for the console's call log.
+        if not console_active() or dbengine.get() is not None:
+            return None
+        return super().init_db()
 
     def migrate_database(self, args):
-        _logger.info("agri-composite has no database; nothing to migrate")
+        # The call log table is created at start-up (core.activity); nothing else to migrate.
+        _logger.info("agri-composite: nothing to migrate")
 
     async def fastapi_app_startup(self, app: FastAPI):
         await CompositeService.get_component().start()

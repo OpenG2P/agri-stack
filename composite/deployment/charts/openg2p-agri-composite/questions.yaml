@@ -81,6 +81,102 @@ questions:
   group: Agri Stack exchange
   show_if: composite.consent.mode=exchange
 
+# ------------------------------ Console -----------------------------
+# Read-only staff console (IAM login). Needs commons: Postgres, Keycloak,
+# Redis and the IAM staff portal API.
+- variable: console.enabled
+  description: "Deploy the staff console: the console UI, the API's admin API with IAM login, its database in the commons Postgres, its Keycloak client and its IAM application (roles AGRI_COMPOSITE_ADMIN / AGRI_COMPOSITE_VIEWER)."
+  type: boolean
+  default: false
+  label: Enable Console
+  group: Console
+- variable: global.consoleHostname
+  description: Public hostname of the console (Istio internal gateway). The namespace segment defaults to the install namespace.
+  type: string
+  label: Console Hostname
+  group: Console
+  show_if: console.enabled=true
+- variable: console.ui.image.tag
+  description: Console UI image tag (e.g. develop or a release like 1.0.0)
+  type: string
+  default: develop
+  label: Console UI Image Tag
+  group: Console
+  show_if: console.enabled=true
+- variable: console.iam.providerApiUrl
+  description: IAM staff portal API inside the cluster (login checks, permissions)
+  type: string
+  default: http://commons-services-iam-staff-portal-api
+  label: IAM Staff API URL (internal)
+  group: Console
+  show_if: console.enabled=true
+- variable: console.iam.publicUrl
+  description: IAM staff portal API as the browser reaches it (console login). Defaults to https://staff-iam.<namespace>.openg2p.org.
+  type: string
+  label: IAM Staff API URL (public)
+  group: Console
+  show_if: console.enabled=true
+- variable: console.iam.redisUrl
+  description: Redis of the IAM staff portal API (login sessions)
+  type: string
+  default: redis://commons-redis-master:6379/0
+  label: IAM Redis URL
+  group: Console
+  show_if: console.enabled=true
+- variable: console.iam.keycloakClientId
+  description: The console's Keycloak client (staff realm), also its IAM application mnemonic. Created by the chart.
+  type: string
+  default: agri-composite
+  label: Keycloak Client ID
+  group: Console
+  show_if: console.enabled=true
+- variable: console.iam.cookieDomain
+  description: Parent domain of the staff login cookies, shared with the IAM staff API. Defaults to .<namespace>.openg2p.org.
+  type: string
+  label: Cookie Domain
+  group: Console
+  show_if: console.enabled=true
+- variable: console.db.hostname
+  description: Postgres host (commons). The chart creates the database and user with the superuser Secret commons-postgresql.
+  type: string
+  default: commons-postgresql
+  label: Database Host
+  group: Console
+  show_if: console.enabled=true
+- variable: console.db.dbname
+  description: Console database name
+  type: string
+  default: agri_composite
+  label: Database Name
+  group: Console
+  show_if: console.enabled=true
+- variable: console.db.user
+  description: Console database user (password generated once into the Secret agri-composite-db)
+  type: string
+  default: agri_composite_user
+  label: Database User
+  group: Console
+  show_if: console.enabled=true
+- variable: console.pmPortalUrl
+  description: Partner Management portal link shown in the console. Defaults to https://partner-management.<namespace>.openg2p.org.
+  type: string
+  label: Partner Management Portal URL
+  group: Console
+  show_if: console.enabled=true
+- variable: console.cmPortalUrl
+  description: Consent Manager portal link shown in the console. Defaults to https://consent-manager.<namespace>.openg2p.org.
+  type: string
+  label: Consent Manager Portal URL
+  group: Console
+  show_if: console.enabled=true
+- variable: console.activityRetentionDays
+  description: Days the console's call log keeps each call (0 keeps everything)
+  type: int
+  default: 90
+  label: Call Log Retention (days)
+  group: Console
+  show_if: console.enabled=true
+
 # ---------------------------- Signing key ---------------------------
 - variable: composite.signingKey.secretName
   description: "Secret holding the composite's signing key: keys composite.p12 (file), password, and optionally kid and algorithm. Create it before installing (Storage → Secrets, or kubectl create secret generic)."

@@ -1,18 +1,31 @@
 import asyncio
+import base64
+import json
 import logging
-from typing import Optional
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from openg2p_fastapi_common.service import BaseService
 
 from ..config import Settings
+from ..core.activity import ActivityStore
 from ..core.audit import AuditEmitter
+from ..core.catalogue import ScopeCatalogue
 from ..core.crypto import build_composite_crypto
 from ..core.engine import CompositeEngine, EngineSettings
 from ..core.loader import UseCaseRegistry
 
 _config = Settings.get_config()
 _logger = logging.getLogger(_config.logging_default_logger_name)
+
+
+PURGE_INTERVAL_SECONDS = 24 * 3600
+
+
+def console_active() -> bool:
+    """The console runs only when switched on and given a database (its call log)."""
+    return bool(_config.console_enabled and _config.db_datasource and not _config.db_datasource.startswith("none:"))
 
 
 class CompositeService(BaseService):
@@ -23,7 +36,8 @@ class CompositeService(BaseService):
     loads the use-case files but never calls a registry.
     """
 
-    def __init__(self, name="", http_transport: Optional[httpx.AsyncBaseTransport] = None, pm_transport=None, **kwargs):
+    def __init__(self, name="", http_transport: Optional[httpx.AsyncBaseTransport] = None, pm_transport=None,
+                 activity: Optional[ActivityStore] = None, **kwargs):
         super().__init__(name=name, **kwargs)
         self._transport = http_transport
         self._client: Optional[httpx.AsyncClient] = None
@@ -55,6 +69,18 @@ class CompositeService(BaseService):
         self.audit = AuditEmitter(
             _config.audit_manager_url, self.http_client, timeout=_config.audit_timeout_seconds, source=_config.audit_source
         )
+        if activity is None:
+            activity = ActivityStore(retention_days=_config.activity_retention_days)
+            if console_active():
+                from openg2p_fastapi_common.context import async_session_maker, dbengine
+
+                activity = ActivityStore(async_session_maker.get(), dbengine.get(), _config.activity_retention_days)
+        self.activity = activity
+        self._last_purge = 0.0
+        self.catalogue = ScopeCatalogue(
+            registries, self.crypto, self.http_client, _config.composite_partner_id,
+            ttl=_config.catalogue_cache_seconds,
+        )
         self.engine = CompositeEngine(
             EngineSettings(
                 composite_partner_id=_config.composite_partner_id,
@@ -70,6 +96,7 @@ class CompositeService(BaseService):
             self.crypto,
             self.http_client,
             audit=self.audit,
+            activity=self.activity,
         )
 
     def http_client(self) -> httpx.AsyncClient:
@@ -85,7 +112,41 @@ class CompositeService(BaseService):
             )
         return self._client
 
+    async def signing_kid(self) -> Optional[str]:
+        """The kid the composite signs with (from a throw-away signature), or None if it cannot sign."""
+        if not self.crypto.can_sign:
+            return None
+        try:
+            jws = await self.crypto.sign_detached({"header": {}, "message": {}})
+            head = jws.split(".")[0]
+            return json.loads(base64.urlsafe_b64decode(head + "=" * (-len(head) % 4))).get("kid")
+        except Exception:
+            _logger.warning("Cannot read the composite's signing kid", exc_info=True)
+            return None
+
+    async def partner_keys(self, pm_reference: str) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
+        """([{kid, algorithm}] Partner Management serves for the partner, or None, error message)."""
+        url = f"{_config.partner_mgmt_api_url.rstrip('/')}/keys/{pm_reference}"
+        try:
+            response = await self.http_client().get(url, timeout=_config.partner_key_fetch_timeout_seconds)
+        except Exception as e:
+            return None, f"Partner Management unreachable: {type(e).__name__}"
+        if response.status_code == 404:
+            return [], None
+        if response.status_code != 200:
+            return None, f"HTTP {response.status_code} from Partner Management"
+        try:
+            keys = response.json().get("keys") or []
+        except (ValueError, AttributeError):
+            return None, "Partner Management answer is not JSON"
+        return [{"kid": k.get("kid"), "algorithm": k.get("algorithm")} for k in keys if isinstance(k, dict)], None
+
     async def start(self):
+        if self.activity.enabled:
+            try:
+                await self.activity.create_tables()
+            except Exception:
+                _logger.exception("Cannot create the call log table; activity will not be recorded")
         if _config.use_cases_reload_seconds > 0 and self._reload_task is None:
             self._reload_task = asyncio.get_running_loop().create_task(self._reload_loop())
 
@@ -94,6 +155,7 @@ class CompositeService(BaseService):
             self._reload_task.cancel()
             self._reload_task = None
         await self.audit.drain()
+        await self.activity.drain()
         if self._client is not None:
             await self._client.aclose()
             self._client = None
@@ -106,3 +168,11 @@ class CompositeService(BaseService):
                     _logger.info("Use-case files changed; reloaded")
             except Exception:
                 _logger.exception("Use-case reload failed; keeping the loaded set")
+            if self.activity.enabled and time.monotonic() - self._last_purge > PURGE_INTERVAL_SECONDS:
+                self._last_purge = time.monotonic()
+                try:
+                    deleted = await self.activity.purge()
+                    if deleted:
+                        _logger.info("Call log: %d rows older than %d days deleted", deleted, self.activity.retention_days)
+                except Exception:
+                    _logger.warning("Call log purge failed", exc_info=True)

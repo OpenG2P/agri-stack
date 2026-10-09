@@ -87,10 +87,15 @@ class CompiledUseCase:
                     "controller": src.controller,
                     "requirement": src.requirement,
                     "depends_on": src.depends_on,
+                    "scopes": src.scopes,
+                    "optional_scopes": src.optional_scopes,
                 }
                 for src in s.sources
             ],
             "consent_grants_needed": sorted({src.controller for src in s.sources}),
+            # What the consent's grant for each registry must (required) and may
+            # (optional) name; registries not listed take the grant as it is.
+            "consent_scopes": s.consent_scopes(),
             "output_fields": sorted(list(s.response.mapping) + list(s.response.derived)),
             "source_status": s.response.source_status,
             "partial_response": s.execution.partial_response,

@@ -9,7 +9,7 @@ loads; the loader logs them once.
 import re
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SLUG = re.compile(r"^[a-z][a-z0-9-]*[a-z0-9]$")
 SOURCE_ID = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -23,7 +23,6 @@ NOT_ENFORCED = (
     "owner",
     "consent.collection",
     "consent.mode",
-    "sources[].request_scopes",
     "response.schema",
     "response.correlate_on",
     "limits.daily_quota_per_partner",
@@ -145,7 +144,14 @@ class SourceSpec(_Strict):
     controller: str = Field(..., min_length=1)
     requirement: Literal["mandatory", "optional"] = "mandatory"
     depends_on: List[str] = []
-    request_scopes: List[str] = []
+    # The registry's data scopes this source needs (IDs <controller>.<name>, from the
+    # registry's catalogue): the partner's consent must grant every one of
+    # ``scopes``; ``optional_scopes`` may be left out (their fields then come back
+    # null). The composite asks for no other scope. Empty: no scope check for this
+    # source (the consent's grant for the registry is used as it is).
+    # ``request_scopes`` is the earlier name of ``scopes``.
+    scopes: List[str] = Field(default_factory=list, validation_alias=AliasChoices("scopes", "request_scopes"))
+    optional_scopes: List[str] = []
     dci: DciSpec
     timeout_ms: Optional[int] = Field(None, ge=50, le=120000)
     retries: int = Field(0, ge=0, le=5)
@@ -161,6 +167,22 @@ class SourceSpec(_Strict):
     @classmethod
     def _one_or_many(cls, v):
         return [v] if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def _scopes(self):
+        for name in ("scopes", "optional_scopes"):
+            values = getattr(self, name)
+            dupes = sorted({v for v in values if values.count(v) > 1})
+            if dupes:
+                raise ValueError(f"source '{self.id}': {name} lists {dupes} twice")
+            wrong = [v for v in values if not v.startswith(self.controller + ".") or v == self.controller + "."]
+            if wrong:
+                raise ValueError(f"source '{self.id}': {name} {wrong} are not scopes of its registry "
+                                 f"'{self.controller}' (IDs are '{self.controller}.<name>')")
+        both = sorted(set(self.scopes) & set(self.optional_scopes))
+        if both:
+            raise ValueError(f"source '{self.id}': {both} are both in scopes and optional_scopes")
+        return self
 
 
 class ResponseSpec(_Strict):
@@ -274,6 +296,22 @@ class UseCase(_Strict):
     def ref(self) -> str:
         return f"{self.use_case}@{self.major}"
 
+    def consent_scopes(self) -> Dict[str, Dict[str, List[str]]]:
+        """{controller: {"required": [...], "optional": [...]}} over the sources that
+        declare scopes: what the partner's consent must (and may) grant per registry.
+        A scope one source needs and another lists as optional is required."""
+        out: Dict[str, Dict[str, set]] = {}
+        for src in self.sources:
+            if not (src.scopes or src.optional_scopes):
+                continue
+            entry = out.setdefault(src.controller, {"required": set(), "optional": set()})
+            entry["required"] |= set(src.scopes)
+            entry["optional"] |= set(src.optional_scopes)
+        return {
+            c: {"required": sorted(e["required"]), "optional": sorted(e["optional"] - e["required"])}
+            for c, e in sorted(out.items())
+        }
+
     def not_enforced_keys(self) -> List[str]:
         used = []
         if self.owner:
@@ -282,8 +320,6 @@ class UseCase(_Strict):
             used.append("consent.collection")
         if self.consent.mode:
             used.append("consent.mode")
-        if any(s.request_scopes for s in self.sources):
-            used.append("sources[].request_scopes")
         if self.response.schema_:
             used.append("response.schema")
         if self.response.correlate_on:

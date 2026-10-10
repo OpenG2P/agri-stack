@@ -1,4 +1,4 @@
-"""Unit tests for the pure parts of e2e.py and partner_kit.py (no cluster, no network).
+"""Unit tests for the pure parts of partner_kit.py and setup_exchange.py (no cluster, no network).
 
   pip install -r scripts/requirements.txt pytest
   pytest scripts/tests
@@ -8,7 +8,7 @@ import base64
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest import mock
 
 import pytest
@@ -17,7 +17,7 @@ from jwt import PyJWS
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-import e2e  # noqa: E402
+import setup_exchange as setup  # noqa: E402
 import partner_kit as kit  # noqa: E402
 
 
@@ -40,12 +40,12 @@ def _claims(jws):
 
 def test_consent_has_a_grant_per_registry_and_verifies(partner_key):
     now = datetime(2026, 10, 2, 10, 0, tzinfo=timezone.utc)
-    jws = kit.make_consent(partner_key, partner="e2e-bank", kid="k1", subject={"type": "FAYDA_FAN", "value": "123"},
+    jws = kit.make_consent(partner_key, partner="test-bank", kid="k1", subject={"type": "FAYDA_FAN", "value": "123"},
                            purpose="credit-assessment", valid_days=1, now=now)
     assert kit.jws_header(jws)["kid"] == "k1" and kit.jws_header(jws)["alg"] == "ES256"
     PyJWS().decode(jws, partner_key.public_key(), algorithms=["ES256"])
     c = _claims(jws)
-    assert c["aud"] == "e2e-bank"
+    assert c["aud"] == "test-bank"
     assert c["subject_id"] == {"type": "FAYDA_FAN", "value": "123"}
     assert c["purpose"] == {"code": "credit-assessment"}
     assert {g["data_controller"]: g["data_scopes"] for g in c["grants"]} == kit.GRANTS
@@ -60,10 +60,10 @@ def test_consent_can_narrow_controllers(partner_key):
 
 
 def test_envelope_detached_signature_covers_canonical_header_and_message(partner_key):
-    env = kit.build_query_envelope(partner_key, partner="e2e-bank", kid="k1", composite="agri-composite",
+    env = kit.build_query_envelope(partner_key, partner="test-bank", kid="k1", composite="agri-composite",
                                    subject={"type": "FAYDA_FAN", "value": "123"},
                                    parameters={"crop_year": 2018, "season": "SEASON_MEHER"}, consent_jws="a.b.c")
-    assert env["header"]["sender_id"] == "e2e-bank" and env["header"]["receiver_id"] == "agri-composite"
+    assert env["header"]["sender_id"] == "test-bank" and env["header"]["receiver_id"] == "agri-composite"
     assert env["header"]["message_ts"].endswith("Z")
     assert env["message"]["consent_jws"] == "a.b.c"
     p1, empty, p3 = env["signature"].split(".")
@@ -91,7 +91,7 @@ def test_composite_p12_round_trip():
 
 
 def test_payloads():
-    assert kit.binding_payload("e2e-bank", "farmer-registry")["partner_mgmt_id"] == "PARTNER_E2E_BANK"
+    assert kit.binding_payload("test-bank", "farmer-registry")["partner_mgmt_id"] == "PARTNER_TEST_BANK"
     pol = kit.policy_payload("crop-sown-registry", "credit-assessment")
     assert pol["allowed_data_scopes"] == ["crop-sown-registry.farmer_reference", "crop-sown-registry.crop_season",
                                           "crop-sown-registry.measures", "crop-sown-registry.location"]
@@ -106,9 +106,9 @@ def test_payloads():
 # ── PM plan ──────────────────────────────────────────────────────────────────
 
 def _pm(key, other, **kw):
-    args = dict(ref="PARTNER_E2E_BANK", kid="k1", pub_pem=kit.public_pem(key), servable=[], partner=None, pending=[])
+    args = dict(ref="PARTNER_TEST_BANK", kid="k1", pub_pem=kit.public_pem(key), servable=[], partner=None, pending=[])
     args.update(kw)
-    return e2e.plan_pm_partner(**args)
+    return kit.plan_pm_partner(**args)
 
 
 def test_pm_absent_partner_is_onboarded(partner_key, other_key):
@@ -153,39 +153,39 @@ def test_pm_created_partner_with_foreign_onboarding_is_conflict(partner_key, oth
 # ── composite Secret plan ────────────────────────────────────────────────────
 
 def test_secret_missing_is_written(partner_key):
-    p = e2e.plan_composite_secret(secret=None, local_pub_pem=kit.public_pem(partner_key), local_kid="k",
+    p = kit.plan_composite_secret(secret=None, local_pub_pem=kit.public_pem(partner_key), local_kid="k",
                                   pm_servable=[])
     assert p == {"use": "local", "write_secret": True, "reason": "the Secret does not exist"}
 
 
 def test_secret_with_our_key_is_kept(partner_key):
     pem = kit.public_pem(partner_key)
-    p = e2e.plan_composite_secret(secret={"pub_pem": pem, "kid": "k"}, local_pub_pem=pem, local_kid="k",
+    p = kit.plan_composite_secret(secret={"pub_pem": pem, "kid": "k"}, local_pub_pem=pem, local_kid="k",
                                   pm_servable=[])
     assert p["use"] == "local" and not p["write_secret"]
 
 
 def test_secret_with_a_key_pm_serves_is_left_alone(partner_key, other_key):
     other = kit.public_pem(other_key)
-    p = e2e.plan_composite_secret(secret={"pub_pem": other, "kid": "theirs"}, local_pub_pem=kit.public_pem(partner_key),
+    p = kit.plan_composite_secret(secret={"pub_pem": other, "kid": "theirs"}, local_pub_pem=kit.public_pem(partner_key),
                                   local_kid="k", pm_servable=[{"kid": "theirs", "public_key": other}])
     assert p["use"] == "cluster" and not p["write_secret"]
 
 
 def test_secret_with_an_unknown_key_is_replaced(partner_key, other_key):
-    p = e2e.plan_composite_secret(secret={"pub_pem": kit.public_pem(other_key), "kid": "x"},
+    p = kit.plan_composite_secret(secret={"pub_pem": kit.public_pem(other_key), "kid": "x"},
                                   local_pub_pem=kit.public_pem(partner_key), local_kid="k", pm_servable=[])
     assert p["use"] == "local" and p["write_secret"]
 
 
 def test_secret_unreadable_is_replaced(partner_key):
-    p = e2e.plan_composite_secret(secret={"pub_pem": None, "kid": "", "error": "ValueError"},
+    p = kit.plan_composite_secret(secret={"pub_pem": None, "kid": "", "error": "ValueError"},
                                   local_pub_pem=kit.public_pem(partner_key), local_kid="k", pm_servable=[])
     assert p["write_secret"] and "ValueError" in p["reason"]
 
 
 def test_secret_manifest_holds_values_only_as_base64():
-    m = e2e.signing_secret_manifest("agri-composite-signing", "trial",
+    m = kit.signing_secret_manifest("agri-composite-signing", "trial",
                                     {"p12": "composite.p12", "password": "password", "kid": "kid",
                                      "algorithm": "algorithm"}, b"\x00p12", "s3cret", "kid-1")
     assert m["metadata"]["namespace"] == "trial"
@@ -200,15 +200,15 @@ NEEDED = {c: kit.policy_payload(c) for c in kit.GRANTS}
 
 
 def test_cm_nothing_bound_creates_both_bindings_and_policies():
-    p = e2e.plan_cm(audience="e2e-bank", pm_ref="PARTNER_E2E_BANK", needed=NEEDED, bindings=[], policies={})
+    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed=NEEDED, bindings=[], policies={})
     assert [(a["op"], a["controller"]) for a in p["actions"]] == [
         ("create_binding", "farmer-registry"), ("put_policy", "farmer-registry"),
         ("create_binding", "crop-sown-registry"), ("put_policy", "crop-sown-registry")]
     assert not p["conflicts"]
 
 
-def _binding(controller, status="active", pm="PARTNER_E2E_BANK"):
-    return {"id": f"b-{controller}", "audience": "e2e-bank", "controller_id": controller, "status": status,
+def _binding(controller, status="active", pm="PARTNER_TEST_BANK"):
+    return {"id": f"b-{controller}", "audience": "test-bank", "controller_id": controller, "status": status,
             "partner_mgmt_id": pm}
 
 
@@ -221,7 +221,7 @@ def _policy(controller, **kw):
 def test_cm_everything_in_place_is_ok():
     bindings = [_binding(c) for c in kit.GRANTS]
     policies = {f"b-{c}": [_policy(c)] for c in kit.GRANTS}
-    p = e2e.plan_cm(audience="e2e-bank", pm_ref="PARTNER_E2E_BANK", needed=NEEDED, bindings=bindings,
+    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed=NEEDED, bindings=bindings,
                     policies=policies)
     assert p["actions"] == [] and p["conflicts"] == [] and sorted(p["ok"]) == sorted(kit.GRANTS)
 
@@ -230,7 +230,7 @@ def test_cm_narrow_policy_is_widened_without_dropping_existing_scopes():
     bindings = [_binding(c) for c in kit.GRANTS]
     policies = {f"b-{c}": [_policy(c)] for c in kit.GRANTS}
     policies["b-farmer-registry"] = [_policy("farmer-registry", allowed_data_scopes=["farmer-registry.personal_details", "x"])]
-    p = e2e.plan_cm(audience="e2e-bank", pm_ref="PARTNER_E2E_BANK", needed=NEEDED, bindings=bindings,
+    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed=NEEDED, bindings=bindings,
                     policies=policies)
     (act,) = p["actions"]
     assert act["op"] == "put_policy" and act["binding_id"] == "b-farmer-registry"
@@ -240,7 +240,7 @@ def test_cm_narrow_policy_is_widened_without_dropping_existing_scopes():
 def test_cm_wrong_purpose_needs_a_new_policy():
     bindings = [_binding("farmer-registry")]
     policies = {"b-farmer-registry": [_policy("farmer-registry", allowed_purposes=["other"])]}
-    p = e2e.plan_cm(audience="e2e-bank", pm_ref="PARTNER_E2E_BANK", needed={"farmer-registry": NEEDED["farmer-registry"]},
+    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed={"farmer-registry": NEEDED["farmer-registry"]},
                     bindings=bindings, policies=policies)
     assert p["actions"][0]["op"] == "put_policy"
     assert set(p["actions"][0]["body"]["allowed_purposes"]) == {"other", "credit-assessment"}
@@ -249,7 +249,7 @@ def test_cm_wrong_purpose_needs_a_new_policy():
 def test_cm_suspended_binding_is_activated():
     bindings = [_binding("farmer-registry", status="suspended")]
     policies = {"b-farmer-registry": [_policy("farmer-registry")]}
-    p = e2e.plan_cm(audience="e2e-bank", pm_ref="PARTNER_E2E_BANK", needed={"farmer-registry": NEEDED["farmer-registry"]},
+    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed={"farmer-registry": NEEDED["farmer-registry"]},
                     bindings=bindings, policies=policies)
     assert [a["op"] for a in p["actions"]] == ["activate_binding"]
 
@@ -257,96 +257,114 @@ def test_cm_suspended_binding_is_activated():
 def test_cm_pending_policy_and_foreign_pm_id_are_conflicts():
     bindings = [_binding("farmer-registry"), _binding("crop-sown-registry", pm="PARTNER_SOMEONE")]
     policies = {"b-farmer-registry": [{"status": "pending", "version": 1, "awe_request_id": "awe-1"}]}
-    p = e2e.plan_cm(audience="e2e-bank", pm_ref="PARTNER_E2E_BANK", needed=NEEDED, bindings=bindings,
+    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed=NEEDED, bindings=bindings,
                     policies=policies)
     assert p["actions"] == []
     assert any("awe-1" in c for c in p["conflicts"]) and any("PARTNER_SOMEONE" in c for c in p["conflicts"])
 
 
 def test_policy_validity_cap():
-    assert e2e.duration_days("P90D") == 90 and e2e.duration_days("P1Y") == 365 and e2e.duration_days(None) is None
+    assert kit.duration_days("P90D") == 90 and kit.duration_days("P1Y") == 365 and kit.duration_days(None) is None
     # Not a PnYnMnWnD duration: treated as no cap (CM is the authority).
-    assert e2e.policy_covers(_policy("farmer-registry", max_validity_duration="PT1H"), NEEDED["farmer-registry"],
+    assert kit.policy_covers(_policy("farmer-registry", max_validity_duration="PT1H"), NEEDED["farmer-registry"],
                              "FAYDA_FAN")
-    assert not e2e.policy_covers(_policy("farmer-registry", allowed_subject_id_types=["FARMER_ID"]),
+    assert not kit.policy_covers(_policy("farmer-registry", allowed_subject_id_types=["FARMER_ID"]),
                                  NEEDED["farmer-registry"], "FAYDA_FAN")
-    assert e2e.policy_covers(_policy("farmer-registry", max_validity_duration="P1D"), NEEDED["farmer-registry"],
+    assert kit.policy_covers(_policy("farmer-registry", max_validity_duration="P1D"), NEEDED["farmer-registry"],
                              "FAYDA_FAN")
 
 
-# ── use case, farmer, outputs ────────────────────────────────────────────────
-
-def test_parse_allowed_partners_forms():
-    assert e2e.parse_allowed_partners("use_case: x\nallowed_partners: [bank-a, 'e2e-bank']  # c\n") == ["bank-a", "e2e-bank"]
-    assert e2e.parse_allowed_partners("allowed_partners:\n  - bank-a\n  # c\n  - \"*\"\ninput: {}\n") == ["bank-a", "*"]
-    assert e2e.parse_allowed_partners("allowed_partners: []\n") == []
-    assert e2e.parse_allowed_partners("use_case: x\n") == []
-    assert e2e.parse_top_scalar("policy: p\npurpose: credit-assessment  # x\n", "purpose") == "credit-assessment"
+# ── setup_exchange ───────────────────────────────────────────────────────────
 
 
-def test_allowed_partners_change_text():
-    text = e2e.allowed_partners_change("e2e-bank", ["bank-a"], "composite", "trial")
-    assert "-   allowed_partners: [bank-a]" in text and "+   allowed_partners: [bank-a, e2e-bank]" in text
 
 
-def test_choose_farmer_prefers_id_match_then_requested_season_then_most_seasons():
-    fr = [("F1", "R1", "ACTIVE"), ("F2", "R2", "ACTIVE"), ("F3", "R3", "ACTIVE"), ("F4", "R4", "INACTIVE")]
-    csr = [("F1", "OTHER", "2019", "SEASON_MEHER", "5"),          # FARMER_ID does not match FR
-           ("F2", "R2", "2018", "SEASON_BELG", "1"),
-           ("F3", "R3", "2019", "SEASON_MEHER", "1"), ("F3", "R3", "2018", "SEASON_MEHER", "1"),
-           ("F4", "R4", "2019", "SEASON_MEHER", "9"),             # not active in FR
-           ("F9", "R9", "2019", "SEASON_MEHER", "9")]             # not in FR
-    assert e2e.choose_farmer(fr, csr)[0] == "F3"
-    assert e2e.choose_farmer(fr, csr, crop_year=2018, season="SEASON_BELG")[0] == "F2"
-    fan, seasons = e2e.choose_farmer(fr, csr)
-    assert seasons[0] == (2019, "SEASON_MEHER", 1)
-    assert e2e.choose_farmer(fr, []) is None
 
 
-def test_curl_and_postman(partner_key):
-    env = kit.build_query_envelope(partner_key, partner="p", kid="k", composite="agri-composite",
-                                   subject={"type": "FAYDA_FAN", "value": "1"})
-    curl = e2e.curl_command("https://agri-composite.trial.openg2p.org/", env)
-    assert "https://agri-composite.trial.openg2p.org/composite/v1/use-cases/loan-profile/query" in curl
-    body = curl.split("<<'JSON'\n")[1].split("\nJSON")[0]
-    assert json.loads(body) == env
-    col = e2e.postman_collection(env, "https://h", "http://127.0.0.1:18080", "2026-10-02T10:05:00+00:00")
-    assert col["info"]["schema"].endswith("v2.1.0/collection.json")
-    assert json.loads(col["item"][0]["request"]["body"]["raw"]) == env
-    assert "expire" in col["item"][0]["request"]["description"]
+
+
+def test_query_envelope_with_a_stored_consent_id():
+    key = kit.generate_partner_key()
+    env = kit.build_query_envelope(key, partner="bank-a", kid="k1", composite="agri-composite",
+                                   subject={"type": "FAYDA_FAN", "value": "123"}, consent_id="c-42")
+    assert env["message"]["consent_id"] == "c-42" and "consent_jws" not in env["message"]
+    head, _, sig = env["signature"].split(".")
+    PyJWS().decode_complete(f"{head}.{kit.b64u(kit.canonical({'header': env['header'], 'message': env['message']}))}.{sig}",
+                            key.public_key(), algorithms=["ES256"])
 
 
 def test_state_dry_run_writes_nothing(tmp_path):
-    s = e2e.State(str(tmp_path / "st"), dry_run=True)
-    _key, kid, new = s.partner_key("e2e-bank")
-    assert new and kid.startswith("e2e-bank-e2e-")
-    s.composite_key("agri-composite")
+    s = setup.State(str(tmp_path / "st"), dry_run=True)
+    _key, _p12, _pw, kid, new = s.composite_key("agri-composite")
+    assert new and kid.startswith("agri-composite-test-")
     assert not (tmp_path / "st").exists()
 
 
 def test_state_is_private_and_reused(tmp_path):
     d = tmp_path / "st"
-    s = e2e.State(str(d), dry_run=False)
-    k1, kid1, new1 = s.partner_key("e2e-bank")
-    c1 = s.composite_key("agri-composite")
-    assert new1 and c1[4]
+    c1 = setup.State(str(d), dry_run=False).composite_key("agri-composite")
+    assert c1[4]
     assert oct(os.stat(d).st_mode & 0o777) == "0o700"
-    for f in ("state.json", "e2e-bank.key.pem", "composite.p12"):
+    for f in ("state.json", "composite.p12"):
         assert oct(os.stat(d / f).st_mode & 0o777) == "0o600"
-    s2 = e2e.State(str(d), dry_run=False)
-    k2, kid2, new2 = s2.partner_key("e2e-bank")
-    c2 = s2.composite_key("agri-composite")
-    assert not new2 and kid2 == kid1 and kit.public_pem(k2) == kit.public_pem(k1)
+    c2 = setup.State(str(d), dry_run=False).composite_key("agri-composite")
     assert not c2[4] and c2[3] == c1[3] and kit.public_pem(c2[0]) == kit.public_pem(c1[0])
 
 
 def test_confirm_requires_yes_without_a_terminal():
-    run = e2e.Run.__new__(e2e.Run)
+    run = setup.Setup.__new__(setup.Setup)
     run.a = mock.Mock(yes=False)
     with mock.patch.object(sys.stdin, "isatty", return_value=False):
-        with pytest.raises(e2e.E2EError) as exc:
+        with pytest.raises(kit.KitError) as exc:
             run.confirm(["PM: onboard X"])
-    assert exc.value.code == e2e.EXIT_DECISION
+    assert exc.value.code == kit.EXIT_DECISION
     run.a.yes = True
     run.confirm(["PM: onboard X"])  # no prompt
     run.confirm([])
+
+
+def test_parse_registries():
+    assert setup.parse_registries(["farmer-registry=trial", " crop-sown-registry = dept1 "]) == {
+        "farmer-registry": "trial", "crop-sown-registry": "dept1"}
+    assert setup.parse_registries([]) == {}
+    for bad in ("farmer-registry", "=trial", "farmer-registry="):
+        with pytest.raises(kit.KitError):
+            setup.parse_registries([bad])
+
+
+def test_needed_policies_from_published_use_cases():
+    use_cases = [
+        {"use_case": "loan-profile@1", "purpose": "credit-assessment",
+         "consent_grants_needed": ["crop-sown-registry", "farmer-registry"],
+         "consent_scopes": {"farmer-registry": {"required": ["farmer-registry.land"],
+                                                "optional": ["farmer-registry.main_crops"]}}},
+        {"use_case": "insurance@1", "purpose": "insurance", "consent_grants_needed": ["farmer-registry"],
+         "consent_scopes": {"farmer-registry": {"required": ["farmer-registry.personal_details"], "optional": []}}},
+    ]
+    out = setup.needed_policies(use_cases, ["farmer-registry", "crop-sown-registry", "other-registry"])
+    assert out["farmer-registry"]["allowed_data_scopes"] == [
+        "farmer-registry.land", "farmer-registry.main_crops", "farmer-registry.personal_details"]
+    assert out["farmer-registry"]["allowed_purposes"] == ["credit-assessment", "insurance"]
+    # Declares no scopes for the Crop Sown Registry: the kit's scopes.
+    assert out["crop-sown-registry"]["allowed_data_scopes"] == sorted(kit.GRANTS["crop-sown-registry"])
+    # No use case reads it: no policy.
+    assert "other-registry" not in out
+
+
+def test_policy_with_several_purposes_needs_all_of_them():
+    needed = setup.needed_policies([
+        {"purpose": "a", "consent_grants_needed": ["farmer-registry"]},
+        {"purpose": "b", "consent_grants_needed": ["farmer-registry"]}], ["farmer-registry"])["farmer-registry"]
+    assert not kit.policy_covers(_policy("farmer-registry", allowed_purposes=["a"]), needed, "FAYDA_FAN")
+    assert kit.policy_covers(_policy("farmer-registry", allowed_purposes=["a", "b"]), needed, "FAYDA_FAN")
+
+
+def test_receipt_trust_gap():
+    kw = dict(exchange_issuer="https://cm.agrix", presenters=["agri-composite"], composite_id="agri-composite",
+              dept_ns="trial", exchange_ns="agrix")
+    assert setup.receipt_trust_gap(dept_trusted=[{"issuer": "https://cm.agrix", "presenter": "agri-composite"}], **kw) is None
+    assert "does not trust" in setup.receipt_trust_gap(dept_trusted=[], **kw)
+    assert "only for presenter" in setup.receipt_trust_gap(
+        dept_trusted=[{"issuer": "https://cm.agrix", "presenter": "someone"}], **kw)
+    assert "does not issue receipts" in setup.receipt_trust_gap(
+        dept_trusted=[], **{**kw, "presenters": []})

@@ -57,10 +57,6 @@ import httpx  # noqa: E402
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 
 import partner_kit as kit  # noqa: E402
-from e2e import (  # noqa: E402  (pure planning helpers, unit-tested there)
-    EXIT_CALL_FAILED, EXIT_DECISION, EXIT_ERROR, EXIT_OK, E2EError, _write_private, load_public, mask, new_kid,
-    plan_cm, plan_pm_partner, same_public_key,
-)
 
 # Sample person ETH-IND-0007 (openg2p-data packs/ETH/samples/individuals.json): farmer FR-0007 in
 # the Farmer Registry's sample data, and crop seasons in the Crop Sown Registry's samples (both
@@ -89,9 +85,9 @@ def _detail(r: httpx.Response) -> str:
 
 def check(r: httpx.Response, what: str, ok=(200, 201)) -> httpx.Response:
     if r.status_code in (401, 403):
-        raise E2EError(f"{what}: {_detail(r)} — the admin client lacks the role, or its token is not accepted")
+        raise kit.KitError(f"{what}: {_detail(r)} — the admin client lacks the role, or its token is not accepted")
     if r.status_code not in ok:
-        raise E2EError(f"{what}: {_detail(r)}")
+        raise kit.KitError(f"{what}: {_detail(r)}")
     return r
 
 
@@ -113,7 +109,7 @@ class Urls:
         self.issuer = (a.issuer or (f"https://keycloak.{bd}/realms/staff" if bd else "")).rstrip("/")
         missing = [n for n, v in vars(self).items() if not v]
         if missing:
-            raise E2EError(f"no URL for {', '.join(missing)}: pass --base-domain or the --*-url options")
+            raise kit.KitError(f"no URL for {', '.join(missing)}: pass --base-domain or the --*-url options")
 
 
 class Keys:
@@ -134,11 +130,11 @@ class Keys:
         if kid and os.path.exists(path) and not renew:
             with open(path, "rb") as fh:
                 return serialization.load_pem_private_key(fh.read(), password=None), kid, False
-        key, kid = kit.generate_partner_key(), new_kid(partner)
+        key, kid = kit.generate_partner_key(), kit.new_kid(partner)
         os.makedirs(self.dir, mode=0o700, exist_ok=True)
-        _write_private(path, kit.private_pem(key))
+        kit._write_private(path, kit.private_pem(key))
         self.meta[partner] = {"kid": kid}
-        _write_private(self.meta_path, json.dumps(self.meta, indent=2).encode())
+        kit._write_private(self.meta_path, json.dumps(self.meta, indent=2).encode())
         return key, kid, True
 
 
@@ -157,7 +153,7 @@ class Run:
         r = self.http.post(f"{self.u.issuer}/protocol/openid-connect/token",
                            data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": secret})
         if r.status_code != 200:
-            raise E2EError(f"{label} admin token for client {client_id}: HTTP {r.status_code} "
+            raise kit.KitError(f"{label} admin token for client {client_id}: HTTP {r.status_code} "
                            f"{(r.json() if 'json' in r.headers.get('content-type', '') else {}).get('error', '')}")
         return r.json()["access_token"]
 
@@ -169,7 +165,7 @@ class Run:
 
     def _serves(self, kid: str) -> bool:
         pub = kit.public_pem(self.key)
-        return any(k.get("kid") == kid and same_public_key(k.get("public_key"), pub) for k in self.served_keys(self.ref))
+        return any(k.get("kid") == kid and kit.same_public_key(k.get("public_key"), pub) for k in self.served_keys(self.ref))
 
     def _wait(self, what: str, done) -> None:
         deadline = time.monotonic() + self.a.wait
@@ -178,7 +174,7 @@ class Run:
             if done():
                 return
             time.sleep(self.a.poll)
-        raise E2EError(f"timed out waiting for {what}", EXIT_DECISION)
+        raise kit.KitError(f"timed out waiting for {what}", kit.EXIT_DECISION)
 
     # 1. use case -------------------------------------------------------------
     def use_case(self):
@@ -226,11 +222,11 @@ class Run:
         partner = None if r.status_code == 404 else check(r, f"PM GET /partners/{self.ref}").json()
         r = self.http.get(f"{base}/partners/requests", headers=h, params={"partner_id": self.ref, "status": "created"})
         pending = check(r, "PM GET /partners/requests").json().get("requests") or []
-        plan = plan_pm_partner(ref=self.ref, kid=self.kid, pub_pem=kit.public_pem(self.key),
+        plan = kit.plan_pm_partner(ref=self.ref, kid=self.kid, pub_pem=kit.public_pem(self.key),
                                servable=self.served_keys(self.ref), partner=partner, pending=pending)
         info(f"{self.ref}: {'status ' + partner['status'] if partner else 'not in PM'} → {plan['reason']}")
         if plan["state"] == "conflict":
-            raise E2EError(plan["reason"], EXIT_DECISION)
+            raise kit.KitError(plan["reason"], kit.EXIT_DECISION)
         label = f"TEST {self.a.partner}"
         request_id = None
         for act in plan["actions"]:
@@ -294,7 +290,7 @@ class Run:
         for b in bindings:
             r = self.http.get(f"{base}/partners/{b['id']}/policies", headers=h)
             policies[b["id"]] = check(r, "CM GET policies").json() if r.status_code != 404 else []
-        plan = plan_cm(audience=self.a.partner, pm_ref=self.ref, needed=needed, bindings=bindings, policies=policies)
+        plan = kit.plan_cm(audience=self.a.partner, pm_ref=self.ref, needed=needed, bindings=bindings, policies=policies)
         for c in plan["ok"]:
             info(f"{self.a.partner} → {c}: binding and policy in place")
         pending = []
@@ -302,7 +298,7 @@ class Run:
             if "pending AWE approval" in conflict:
                 pending.append(conflict)
             else:
-                raise E2EError(conflict, EXIT_DECISION)
+                raise kit.KitError(conflict, kit.EXIT_DECISION)
         ids: Dict[str, str] = {}
         for act in plan["actions"]:
             c = act["controller"]
@@ -343,13 +339,23 @@ class Run:
         step(f"5. Consent and query {self.a.use_case} as {self.a.partner}")
         subject = {"type": self.a.subject_type, "value": self.a.fan}
         params = {k: v for k, v in (("crop_year", self.a.crop_year), ("season", self.a.season)) if v is not None}
-        consent = kit.make_consent(self.key, partner=self.a.partner, kid=self.kid, subject=subject,
-                                   purpose=self.purpose, controllers=self.controllers, valid_days=1,
-                                   scopes=self.scopes)
-        env = kit.build_query_envelope(self.key, partner=self.a.partner, kid=self.kid, composite=self.a.composite_id,
-                                       subject=subject, parameters=params, consent_jws=consent)
-        info(f"subject {self.a.subject_type} {mask(self.a.fan)}, parameters {params or '{}'}, "
-             f"consent grants {self.controllers}")
+        if self.a.consent_id:
+            # A consent the farmer gave through the Consent Manager (partner portal, verified by staff):
+            # the exchange CM checks it and what it grants; the partner signs only the request.
+            env = kit.build_query_envelope(self.key, partner=self.a.partner, kid=self.kid,
+                                           composite=self.a.composite_id, subject=subject, parameters=params,
+                                           consent_id=self.a.consent_id)
+            info(f"subject {self.a.subject_type} {kit.mask(self.a.fan)}, parameters {params or '{}'}, "
+                 f"stored consent {self.a.consent_id}")
+        else:
+            consent = kit.make_consent(self.key, partner=self.a.partner, kid=self.kid, subject=subject,
+                                       purpose=self.purpose, controllers=self.controllers, valid_days=1,
+                                       scopes=self.scopes)
+            env = kit.build_query_envelope(self.key, partner=self.a.partner, kid=self.kid,
+                                           composite=self.a.composite_id, subject=subject, parameters=params,
+                                           consent_jws=consent)
+            info(f"subject {self.a.subject_type} {kit.mask(self.a.fan)}, parameters {params or '{}'}, "
+                 f"consent grants {self.controllers}")
         url = f"{self.u.composite}/composite/v1/use-cases/{self.a.use_case}/query"
         started = time.monotonic()
         r = self.http.post(url, json=env, timeout=90)
@@ -362,7 +368,7 @@ class Run:
         # The answer holds a farmer's personal data: git-ignored folder, owner-only file.
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         path = os.path.join(self.a.out_dir, f"{self.a.use_case}-{self.a.base_domain or 'env'}-{stamp}.json")
-        _write_private(path, (text + "\n").encode())
+        kit._write_private(path, (text + "\n").encode())
         info(f"POST {url} → HTTP {r.status_code} in {elapsed} ms; response saved to {path}")
         if self.a.print:
             print(text, flush=True)
@@ -375,7 +381,7 @@ class Run:
         key = next((k for k in self.served_keys(kit.pm_reference(self.a.composite_id)) if k.get("kid") == kid), None)
         if not key:
             return f"not checked (PM serves no kid {kid} for {self.a.composite_id})"
-        return kit.verify_response_with_key(body, load_public(key["public_key"])) + f" (PM key {kid})"
+        return kit.verify_response_with_key(body, kit.load_public(key["public_key"])) + f" (PM key {kid})"
 
     def _cm_setup_hint(self):
         needed = getattr(self, "cm_unchecked", None)
@@ -393,7 +399,7 @@ class Run:
         info(f"response signature: {sig}")
         if not isinstance(body, dict):
             warn("the composite returned no signed envelope")
-            return EXIT_CALL_FAILED
+            return kit.EXIT_CALL_FAILED
         header, msg = body.get("header") or {}, body.get("message") or {}
         info(f"header.status {header.get('status')}"
              + (f", {header.get('status_reason_code')}: {header.get('status_reason_message')}"
@@ -403,21 +409,21 @@ class Run:
             info(f"source {sid:17} {s.get('status')}" + (f" — {s['detail']}" if s.get("detail") else ""))
         if "INVALID" in sig or sig == "MISSING":
             warn("the response signature does not verify")
-            return EXIT_CALL_FAILED
+            return kit.EXIT_CALL_FAILED
         if status != 200 or header.get("status") != "succ":
             err = msg.get("error") or {}
             warn(f"FAILED: {err.get('code')}: {err.get('message')}")
             if str(err.get("code") or "").startswith("consent"):
                 self._cm_setup_hint()
-            return EXIT_CALL_FAILED
+            return kit.EXIT_CALL_FAILED
         bad = {sid: s for sid, s in sources.items() if s.get("status") not in ("ok", "no_record")}
         if bad:
             warn("FAILED: " + "; ".join(f"{sid} {s.get('status')}" for sid, s in bad.items()))
             if any(s.get("status") == "denied" for s in bad.values()):
                 self._cm_setup_hint()
-            return EXIT_CALL_FAILED
+            return kit.EXIT_CALL_FAILED
         info("OK")
-        return EXIT_OK
+        return kit.EXIT_OK
 
 
 def main(argv=None) -> int:
@@ -427,6 +433,10 @@ def main(argv=None) -> int:
     p.add_argument("--fan", default=SAMPLE_FAN,
                    help=f"the farmer's ID (FAYDA_FAN by default), as the farmer gives it "
                         f"(default {SAMPLE_FAN}: sample farmer FR-0007 of a demo install)")
+    p.add_argument("--consent-id",
+                   help="query with a consent the farmer gave through the Consent Manager (e.g. collected in the "
+                        "partner portal and verified by staff) instead of a consent this script signs; the "
+                        "composite must be in exchange consent mode, and --fan must be that consent's farmer")
     p.add_argument("--subject-type", default="FAYDA_FAN", choices=kit.SUBJECT_ID_TYPES)
     p.add_argument("--use-case", default="loan-profile")
     p.add_argument("--crop-year", type=int)
@@ -461,12 +471,12 @@ def main(argv=None) -> int:
         run.onboard()
         run.access()
         return run.query()
-    except E2EError as e:
+    except kit.KitError as e:
         print("\nERROR: " + str(e).replace("\n", "\n       "), file=sys.stderr)
         return e.code
     except httpx.HTTPError as e:
         print(f"\nERROR: {type(e).__name__}: {e}", file=sys.stderr)
-        return EXIT_ERROR
+        return kit.EXIT_ERROR
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130

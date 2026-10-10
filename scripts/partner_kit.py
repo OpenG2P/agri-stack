@@ -21,12 +21,15 @@ import argparse
 import base64
 import json
 import os
+import re
+import secrets
 import ssl
 import sys
 import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -79,7 +82,7 @@ def utc_ts(now=None) -> str:
     return now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-# ── pure helpers (also used by e2e.py) ───────────────────────────────────────
+# ── pure helpers (also used by partner_test.py and setup_exchange.py) ─────────
 
 DEFAULT_PURPOSE = "credit-assessment"
 SUBJECT_ID_TYPES = ["FAYDA_FAN", "FARMER_ID"]
@@ -159,13 +162,18 @@ def sign_detached(payload: dict, key, kid: str) -> str:
 
 
 def build_query_envelope(key, *, partner: str, kid: str, composite: str, subject: dict, parameters=None,
-                         consent_jws=None, now=None) -> dict:
-    """The signed request envelope a partner posts to .../use-cases/{use_case}/query."""
+                         consent_jws=None, now=None, consent_id=None) -> dict:
+    """The signed request envelope a partner posts to .../use-cases/{use_case}/query.
+
+    consent_jws: a consent the partner signs; consent_id: instead, the ID of a consent the
+    subject gave through the Consent Manager (e.g. collected in the partner portal)."""
     header = {"version": "1.0.0", "message_id": str(uuid.uuid4()), "message_ts": utc_ts(now),
               "action": "query", "sender_id": partner, "receiver_id": composite}
     message = {"subject": dict(subject), "parameters": dict(parameters or {})}
     if consent_jws:
         message["consent_jws"] = consent_jws
+    if consent_id:
+        message["consent_id"] = consent_id
     return {"signature": sign_detached({"header": header, "message": message}, key, kid),
             "header": header, "message": message}
 
@@ -193,6 +201,234 @@ def verify_response_with_key(body, public_key) -> str:
 
 
 # ── keys ─────────────────────────────────────────────────────────────────────
+
+
+# ── Shared by partner_test.py and setup_exchange.py: errors, key comparison, and the plans
+#    for Partner Management, the Consent Manager and the composite's signing Secret. ──────
+
+EXIT_OK, EXIT_ERROR, EXIT_DECISION, EXIT_CALL_FAILED = 0, 1, 2, 3
+MANAGED_BY = "agri-stack-scripts"
+CONSENT_VALID_DAYS = 1  # the test consents run for a day; a policy must allow at least that
+
+
+class KitError(Exception):
+    def __init__(self, message: str, code: int = EXIT_ERROR):
+        super().__init__(message)
+        self.code = code
+
+
+def mask(value: Optional[str]) -> str:
+    value = str(value or "")
+    return ("…" + value[-4:]) if len(value) > 4 else "…"
+
+
+def load_public(pem: str):
+    data = pem.encode() if isinstance(pem, str) else pem
+    if b"BEGIN CERTIFICATE" in data:
+        return x509.load_pem_x509_certificate(data).public_key()
+    return serialization.load_pem_public_key(data)
+
+
+class _PublicOnly:
+    """A public key where the kit expects a private one (it only calls .public_key())."""
+
+    def __init__(self, pub):
+        self._pub = pub
+
+    def public_key(self):
+        return self._pub
+
+
+def spki(pub) -> bytes:
+    return pub.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+
+
+def same_public_key(pem_a: Optional[str], pem_b: Optional[str]) -> bool:
+    try:
+        return bool(pem_a and pem_b) and spki(load_public(pem_a)) == spki(load_public(pem_b))
+    except Exception:
+        return False
+
+
+def new_kid(owner: str) -> str:
+    return f"{owner}-test-{datetime.now(timezone.utc):%Y%m%d}-{secrets.token_hex(2)}"
+
+
+def _write_private(path: str, data: bytes):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    os.chmod(path, 0o600)
+
+
+def plan_pm_partner(*, ref: str, kid: str, pub_pem: str, servable: List[dict], partner: Optional[dict],
+                    pending: List[dict]) -> dict:
+    """What PM needs so that `ref` serves (kid, pub_pem).
+
+    servable: GET /keys/{ref} keys (only an active partner's valid keys); partner: GET /partners/{ref}
+    or None; pending: open requests (status 'created') for ref.
+    Returns {"state": "ok"|"actions"|"conflict", "actions": [...], "reason": str}. Actions:
+    {"op": "onboard"} | {"op": "key_update"} (each then approved) | {"op": "approve", "request_id"} | {"op": "enable"}.
+    """
+    for k in servable:
+        if k.get("kid") == kid:
+            if same_public_key(k.get("public_key"), pub_pem):
+                return {"state": "ok", "actions": [], "reason": f"PM serves kid {kid}"}
+            return {"state": "conflict", "actions": [],
+                    "reason": f"PM serves kid {kid} for {ref} with a different public key; rerun with --new-keys"}
+    if partner is None:
+        return {"state": "actions", "actions": [{"op": "onboard"}], "reason": f"{ref} is not in PM"}
+    status = partner.get("status")
+    mine = [r for r in pending if kid in [(k or {}).get("kid") for k in r.get("proposed_keys") or []]]
+    actions: List[dict] = []
+    if status == "disabled":
+        actions.append({"op": "enable"})
+    if mine:
+        actions.append({"op": "approve", "request_id": mine[0]["id"], "request_type": mine[0].get("request_type")})
+        return {"state": "actions", "actions": actions, "reason": f"a {mine[0].get('request_type')} request with kid {kid} is open"}
+    if status == "created":
+        other = next((r for r in pending if r.get("request_type") == "onboarding"), None)
+        hint = f"open onboarding request {other['id']} has other keys" if other else "no open onboarding request"
+        return {"state": "conflict", "actions": [],
+                "reason": f"{ref} is onboarded but never approved ({hint}); approve or reject it in PM, then rerun"}
+    actions.append({"op": "key_update"})
+    return {"state": "actions", "actions": actions, "reason": f"{ref} is {status} without kid {kid}"}
+
+
+def plan_composite_secret(*, secret: Optional[dict], local_pub_pem: str, local_kid: str,
+                          pm_servable: List[dict]) -> dict:
+    """Which composite key to use, and whether Secret agri-composite-signing must be (re)written.
+
+    secret: None (missing) or {"pub_pem": str|None, "kid": str, "error": str|None}.
+    Returns {"use": "local"|"cluster", "write_secret": bool, "reason": str}.
+    """
+    if secret is None:
+        return {"use": "local", "write_secret": True, "reason": "the Secret does not exist"}
+    pub = secret.get("pub_pem")
+    if not pub:
+        return {"use": "local", "write_secret": True,
+                "reason": f"the Secret's .p12 cannot be read ({secret.get('error') or 'missing key'}); it will be replaced"}
+    if same_public_key(pub, local_pub_pem) and (secret.get("kid") or "") == local_kid:
+        return {"use": "local", "write_secret": False, "reason": "the Secret holds this script's composite key"}
+    skid = secret.get("kid") or ""
+    for k in pm_servable:
+        if same_public_key(k.get("public_key"), pub) and (not skid or k.get("kid") == skid):
+            return {"use": "cluster", "write_secret": False,
+                    "reason": f"the Secret's key (kid {skid or k.get('kid')}) is already served by PM; left as is"}
+    return {"use": "local", "write_secret": True,
+            "reason": f"the Secret's key (kid {skid or 'thumbprint'}) is not served by PM; it will be replaced"}
+
+
+_DURATION = re.compile(r"^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?$")
+
+
+def duration_days(value: Optional[str]) -> Optional[float]:
+    """Days in a simple ISO-8601 date duration (PnYnMnWnD); None = no cap or not parsable."""
+    m = _DURATION.match(value or "")
+    if not value or not m:
+        return None
+    y, mo, w, d = (int(x or 0) for x in m.groups())
+    return y * 365 + mo * 30 + w * 7 + d
+
+
+def policy_covers(policy: Optional[dict], needed: dict, subject_type: str) -> bool:
+    if not policy or policy.get("status", "active") != "active":
+        return False
+    if not set(needed["allowed_data_scopes"]) <= set(policy.get("allowed_data_scopes") or []):
+        return False
+    for field, values in (("allowed_purposes", needed["allowed_purposes"]),
+                          ("allowed_subject_id_types", [subject_type]),
+                          ("allowed_signing_algs", [SIGNING_ALG])):
+        allowed = policy.get(field) or []
+        if allowed and not set(values) <= set(allowed):
+            return False
+    cap = duration_days(policy.get("max_validity_duration"))
+    return cap is None or cap >= CONSENT_VALID_DAYS
+
+
+def merged_policy(active: Optional[dict], needed: dict) -> dict:
+    """The needed policy, widened by what the active policy already allows (never narrows)."""
+    if not active:
+        return dict(needed)
+    out = dict(needed)
+    for field in ("allowed_data_scopes", "allowed_purposes", "allowed_subject_id_types", "allowed_signing_algs"):
+        out[field] = sorted(set(needed[field]) | set(active.get(field) or []))
+    old, new = duration_days(active.get("max_validity_duration")), duration_days(needed.get("max_validity_duration"))
+    if active.get("max_validity_duration") and old is not None and new is not None and old > new:
+        out["max_validity_duration"] = active["max_validity_duration"]
+    return out
+
+
+def plan_cm(*, audience: str, pm_ref: str, needed: Dict[str, dict], bindings: List[dict],
+            policies: Dict[str, List[dict]], subject_type: str = "FAYDA_FAN") -> dict:
+    """CM bindings + policies for `audience`, one per controller in `needed` ({controller: policy body}).
+
+    bindings: GET /consent/v1/partners?audience=; policies: {binding id: GET .../{id}/policies}.
+    Returns {"actions": [...], "conflicts": [...], "ok": [controllers]}.
+    """
+    actions, conflicts, ok = [], [], []
+    for controller, policy in needed.items():
+        b = next((x for x in bindings if x.get("audience") == audience and x.get("controller_id") == controller), None)
+        if b is None:
+            actions.append({"op": "create_binding", "controller": controller})
+            actions.append({"op": "put_policy", "controller": controller, "body": policy})
+            continue
+        if b.get("partner_mgmt_id") and b["partner_mgmt_id"] != pm_ref:
+            conflicts.append(f"{audience} → {controller}: binding {b['id']} uses partner_mgmt_id "
+                             f"{b['partner_mgmt_id']}, not {pm_ref}")
+            continue
+        if b.get("status") != "active":
+            actions.append({"op": "activate_binding", "controller": controller, "binding_id": b["id"]})
+        versions = policies.get(b["id"]) or []
+        active = next((p for p in versions if p.get("status") == "active"), None)
+        if policy_covers(active, policy, subject_type):
+            if b.get("status") == "active":
+                ok.append(controller)
+            continue
+        pending = [p for p in versions if p.get("status") == "pending"]
+        if pending:
+            conflicts.append(f"{audience} → {controller}: policy v{pending[0].get('version')} is pending AWE "
+                             f"approval (request {pending[0].get('awe_request_id')}); approve it, then rerun")
+            continue
+        actions.append({"op": "put_policy", "controller": controller, "binding_id": b["id"],
+                        "body": merged_policy(active, policy)})
+    return {"actions": actions, "conflicts": conflicts, "ok": ok}
+
+
+def describe_pm_action(ref: str, action: dict, kid: str) -> str:
+    op = action["op"]
+    if op == "onboard":
+        return f"PM: onboard {ref} with key {kid}, then approve the request"
+    if op == "key_update":
+        return f"PM: key-update request adding key {kid} to {ref}, then approve it"
+    if op == "approve":
+        return f"PM: approve open {action.get('request_type')} request {action['request_id']} for {ref}"
+    if op == "enable":
+        return f"PM: enable partner {ref}"
+    return f"PM: {op} {ref}"
+
+
+def describe_cm_action(audience: str, action: dict) -> str:
+    op, controller = action["op"], action["controller"]
+    if op == "create_binding":
+        return f"CM: create binding {audience} → {controller} (partner_mgmt_id {pm_reference(audience)})"
+    if op == "activate_binding":
+        return f"CM: set binding {action['binding_id']} ({audience} → {controller}) active"
+    body = action["body"]
+    return (f"CM: put policy for {audience} → {controller}: scopes {body['allowed_data_scopes']}, "
+            f"purposes {body['allowed_purposes']}, id types {body['allowed_subject_id_types']}")
+
+
+def signing_secret_manifest(name: str, namespace: str, keys: Dict[str, str], p12: bytes, password: str,
+                            kid: str) -> dict:
+    def b64(v):
+        return base64.b64encode(v if isinstance(v, bytes) else v.encode()).decode()
+
+    return {"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+            "metadata": {"name": name, "namespace": namespace, "labels": {"app.kubernetes.io/managed-by": MANAGED_BY}},
+            "data": {keys["p12"]: b64(p12), keys["password"]: b64(password), keys["kid"]: b64(kid),
+                     keys["algorithm"]: b64("auto")}}
+
 
 def cmd_keys(a):
     os.makedirs(a.out, exist_ok=True)

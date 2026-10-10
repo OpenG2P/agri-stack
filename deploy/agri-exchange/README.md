@@ -5,7 +5,7 @@ Installs the Agri Stack exchange into one namespace (default `agrix`), in order:
 | # | Release | Chart | Exchange override |
 |---|---|---|---|
 | 1 | `commons` | `openg2p/openg2p-commons-base` | `commons-base.yaml.gotmpl` — Novu and Kafka UI off |
-| 2 | `commons-services` | `openg2p/openg2p-commons-services` | `commons-services.yaml.gotmpl` — registry-only services, WebSub and AWE off; Consent Manager in the exchange role (receipt issuer `agri-stack-exchange-cm`, presenter `agri-composite`) with your signing key |
+| 2 | `commons-services` | `openg2p/openg2p-commons-services` | `commons-services.yaml.gotmpl` — registry-only services, WebSub and AWE off; Consent Manager with its partner portal (toggle `partnerPortal`), in the exchange role (receipt issuer `agri-stack-exchange-cm`, presenter `agri-composite`) with your signing key |
 | 3 | `agri-composite` | `openg2p/openg2p-agri-composite` | `agri-composite.yaml.gotmpl` — consent mode `exchange`, department registry URLs |
 
 The commons charts are used unchanged; everything exchange-specific is in the

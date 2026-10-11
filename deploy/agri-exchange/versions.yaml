@@ -2,6 +2,6 @@
 # are pinned). Bump them together, test, then bump bundleVersion.
 bundleVersion: 0.1.0-develop
 charts:
-  commonsBase: 0.0.0-develop.293       # openg2p/openg2p-commons-base
-  commonsServices: 0.0.0-develop.293   # openg2p/openg2p-commons-services (bundles openg2p-consent-manager 0.0.0-develop.64)
-  agriComposite: 0.0.0-develop.42      # openg2p/openg2p-agri-composite
+  commonsBase: 0.0.0-develop.309       # openg2p/openg2p-commons-base
+  commonsServices: 0.0.0-develop.309   # openg2p/openg2p-commons-services (bundles openg2p-consent-manager 0.0.0-develop.65)
+  agriComposite: 0.0.0-develop.46      # openg2p/openg2p-agri-composite

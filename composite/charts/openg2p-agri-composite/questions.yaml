@@ -58,17 +58,18 @@ questions:
 
 # ------------------------ Agri Stack exchange ------------------------
 - variable: composite.consent.mode
-  description: "passthrough (default): the partner's consent goes to each registry unchanged. exchange: validated at the exchange Consent Manager, and each registry gets its own consent receipt (Agri Stack exchange install)."
+  description: "exchange (default): the partner's consent is checked at the exchange Consent Manager, and each registry gets its own consent receipt (Agri Stack exchange install). passthrough: the partner's consent goes to each registry unchanged, so each registry's Consent Manager needs a binding for every partner."
   type: enum
   options:
-    - passthrough
     - exchange
-  default: passthrough
+    - passthrough
+  default: exchange
   label: Consent Mode
   group: Agri Stack exchange
 - variable: composite.consent.exchangeCmUrl
-  description: Exchange Consent Manager partner API base URL (/consent/v1/validate is appended)
+  description: Exchange Consent Manager partner API base URL (/consent/v1/validate is appended). Default the Consent Manager in this namespace.
   type: string
+  default: http://commons-services-cm-partner-api
   label: Exchange Consent Manager URL
   group: Agri Stack exchange
   show_if: composite.consent.mode=exchange
@@ -79,6 +80,12 @@ questions:
   label: Exchange Consent Manager Timeout
   group: Agri Stack exchange
   show_if: composite.consent.mode=exchange
+- variable: composite.corsAllowOrigins
+  description: Browser origins allowed to call the composite (comma-separated), by default the Consent Manager's partner portal for its use-case pages. Empty for none.
+  type: string
+  default: https://consent-partner-portal.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org
+  label: Allowed Browser Origins (CORS)
+  group: Agri Stack exchange
 
 # ------------------------------ Console -----------------------------
 # Read-only staff console (IAM login). Needs commons: Postgres, Keycloak,

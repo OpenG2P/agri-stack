@@ -132,10 +132,15 @@ composite:
   # The composite's partner ID must be a receipt presenter at that CM, and each
   # department CM must trust the exchange CM as a receipt issuer.
   consent:
-    mode: passthrough
+    # exchange (default): the partner's consent is checked at the exchange Consent
+    # Manager, which gives each registry its own consent receipt (Agri Stack
+    # exchange install). passthrough: the partner's consent goes to each registry
+    # unchanged, so every registry's CM needs a binding for every partner (a single
+    # install where the registries share the composite's commons).
+    mode: exchange
     # Exchange Consent Manager partner-api base URL (/consent/v1/validate is
-    # appended). Used only when mode is exchange.
-    exchangeCmUrl: ""
+    # appended): the CM of the composite's own namespace. Used only when mode is exchange.
+    exchangeCmUrl: http://commons-services-cm-partner-api
     exchangeCmTimeoutSeconds: 5
 
   # ── Use cases: name → YAML (one use case per entry) ─────────────────────
@@ -143,10 +148,10 @@ composite:
   # mounted at useCasesMountPath; pods reload changed files every
   # useCasesReloadSeconds without a restart. Set existingUseCasesConfigMap to
   # mount your own ConfigMap instead (keys = <name>.yaml).
-  # Browser origins allowed to call the composite's APIs (comma-separated), e.g.
-  # https://consent-partner-portal.<namespace>.openg2p.org for the partner portal's
-  # use-case pages. Empty: none (no CORS headers).
-  corsAllowOrigins: ""
+  # Browser origins allowed to call the composite's APIs (comma-separated, templated):
+  # by default the Consent Manager's partner portal, for its use-case pages.
+  # Empty: none (no CORS headers).
+  corsAllowOrigins: 'https://consent-partner-portal.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
   existingUseCasesConfigMap: ""
   useCasesMountPath: /app/config/use-cases
   useCasesReloadSeconds: 30

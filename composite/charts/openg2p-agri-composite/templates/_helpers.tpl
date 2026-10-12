@@ -177,3 +177,14 @@ start either way. Root context; securityContext is the API container's.
     limits:
       memory: 64Mi
 {{- end -}}
+
+{{/*
+corsAllowOrigins (comma-separated, templated) as a JSON list: "" → [].
+*/}}
+{{- define "agriComposite.corsOriginsJson" -}}
+{{- $out := list -}}
+{{- range splitList "," (tpl (.Values.corsAllowOrigins | default "") .) -}}
+{{- if trim . -}}{{- $out = append $out (trim .) -}}{{- end -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}

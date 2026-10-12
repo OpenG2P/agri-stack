@@ -325,8 +325,9 @@ composite:
     AGRI_COMPOSITE_SIGNING_P12_PATH: '{{ .Values.signingKey.mountPath }}/{{ .Values.signingKey.p12Key }}'
     AGRI_COMPOSITE_LOGGING_LEVEL: INFO
     # Browser origins allowed to call the composite (e.g. the Consent Manager's partner
-    # portal reading the public use-case list). Comma-separated; empty = no CORS.
-    AGRI_COMPOSITE_CORS_ALLOW_ORIGINS: '{{ tpl (.Values.corsAllowOrigins | default "") $ }}'
+    # portal reading the public use-case list). Rendered as a JSON list (the setting is a
+    # list, and an empty or plain-text value stops the API at start); [] = no CORS.
+    AGRI_COMPOSITE_CORS_ALLOW_ORIGINS: '{{ include "agriComposite.corsOriginsJson" $ }}'
     AGRI_COMPOSITE_CONSENT_MODE: '{{ .Values.consent.mode | default "passthrough" }}'
     AGRI_COMPOSITE_CONSENT_EXCHANGE_CM_URL: '{{ tpl (.Values.consent.exchangeCmUrl | default "") $ }}'
     AGRI_COMPOSITE_CONSENT_EXCHANGE_CM_TIMEOUT_SECONDS: '{{ .Values.consent.exchangeCmTimeoutSeconds | default 5 }}'

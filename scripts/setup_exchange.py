@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-time (idempotent) operator setup of an Agri Exchange after install.
 
-Run once after installing the Agri Exchange bundle (and again after adding a registry or a use
+Run once after installing the Agri Exchange (and again after adding a registry or a use
 case that needs new data scopes). Uses the current kubectl context: reads Deployments, Services
 and Secrets, and reaches the services through `kubectl port-forward` (closed on exit).
 

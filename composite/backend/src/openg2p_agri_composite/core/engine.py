@@ -3,7 +3,7 @@
 Partner → composite: a signed envelope ``{signature, header, message}``.
 Steps: verify the partner's signature (PM key, fail closed) → resolve the use
 case → allowed partner → validate input → rate limit → consent checks (in
-exchange mode, then consent receipts from the exchange Consent Manager) → run the
+exchange mode, then consent tokens from the exchange Consent Manager) → run the
 sources as a DAG → partial-response rule → mapping and derived values → sign
 the response. Nothing is stored; logs carry the request ID, use case, partner,
 statuses and timings only.
@@ -75,7 +75,7 @@ class EngineSettings:
     registries: Dict[str, Dict[str, str]] = field(default_factory=dict)
     # passthrough: the partner's consent goes to each registry unchanged.
     # exchange: validated at the exchange Consent Manager first; each registry
-    # gets its own controller's consent receipt instead.
+    # gets its own controller's consent token instead.
     consent_mode: str = "passthrough"
     exchange_cm_url: str = ""
     exchange_cm_timeout_seconds: float = 5.0
@@ -295,7 +295,7 @@ class CompositeEngine:
             return {s.id: True for s in compiled.spec.sources}, {}
         if consent_id is not None:
             # A consent the subject gave and the Consent Manager holds: only the exchange CM
-            # can turn it into registry receipts (single-install support is to do).
+            # can turn it into registry consent tokens (single-install support is to do).
             if self.settings.consent_mode != "exchange":
                 raise QueryError(400, "consent_id_needs_exchange",
                                  "message.consent_id needs the composite's exchange consent mode")
@@ -327,14 +327,14 @@ class CompositeEngine:
     async def _exchange_consent(
         self, compiled: CompiledUseCase, message, subject, granted: Dict[str, bool], request_id: str
     ) -> Tuple[Dict[str, str], Dict[str, SourceResult]]:
-        """Exchange mode: the partner's consent → one consent receipt per registry.
+        """Exchange mode: the partner's consent → one consent token per registry.
 
         Calls the exchange Consent Manager ``/validate`` with the partner's
         consent and ``issue_receipts: true`` (the composite is the caller, as a
         registry is towards its own CM: ``partner_id`` is the composite's
-        partner ID, a configured receipt presenter there). Deny → the request
-        is denied. Returns ({controller: receipt JWS}, {source_id: preset
-        result}) — an optional source whose controller got no receipt is
+        partner ID, a configured token presenter there). Deny → the request
+        is denied. Returns ({controller: consent token JWS}, {source_id: preset
+        result}) — an optional source whose controller got no token is
         unavailable; a mandatory one fails the request.
         """
         if not compiled.spec.consent.required:
@@ -349,7 +349,7 @@ class CompositeEngine:
             "request_context": {"subject_id": subject},
         }
         if any(src.scopes or src.optional_scopes for src in compiled.spec.sources):
-            # Receipts carry only the scopes this use case asks for (CM: granted ∩ policy ∩ requested),
+            # Consent tokens carry only the scopes this use case asks for (CM: granted ∩ policy ∩ requested),
             # so each registry returns no other field.
             body["request_context"]["requested_scopes"] = requested_scopes(
                 decode_claims(message["consent_jws"]), compiled.spec.sources)
@@ -419,7 +419,7 @@ class CompositeEngine:
     async def _exchange_consent_by_id(
         self, compiled: CompiledUseCase, message, subject, partner_id: str, request_id: str
     ) -> Tuple[Dict[str, str], Dict[str, bool], Dict[str, SourceResult]]:
-        """A stored consent (message.consent_id) → receipts, per-source grant flags, preset results.
+        """A stored consent (message.consent_id) → consent tokens, per-source grant flags, preset results.
 
         The exchange CM checks the consent (held by it, given by the subject: active, in its
         validity, obtained by this partner, about this subject) and answers what it grants per
@@ -469,9 +469,9 @@ class CompositeEngine:
         receipts: Optional[Dict[str, str]] = None,
         preset: Optional[Dict[str, SourceResult]] = None,
     ) -> Dict[str, SourceResult]:
-        """``receipts`` (exchange mode): {controller: receipt JWS} sent to each
-        registry instead of ``consent_jws``; ``preset``: results decided before
-        any call (e.g. an optional source with no receipt)."""
+        """``receipts`` (exchange mode): {controller: consent token JWS} sent to
+        each registry instead of ``consent_jws``; ``preset``: results decided
+        before any call (e.g. an optional source with no consent token)."""
         spec = compiled.spec
         results: Dict[str, SourceResult] = {}
         for src in spec.sources:

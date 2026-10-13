@@ -366,5 +366,5 @@ def test_receipt_trust_gap():
     assert "does not trust" in setup.receipt_trust_gap(dept_trusted=[], **kw)
     assert "only for presenter" in setup.receipt_trust_gap(
         dept_trusted=[{"issuer": "https://cm.agrix", "presenter": "someone"}], **kw)
-    assert "does not issue receipts" in setup.receipt_trust_gap(
+    assert "does not issue consent tokens" in setup.receipt_trust_gap(
         dept_trusted=[], **{**kw, "presenters": []})

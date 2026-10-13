@@ -58,7 +58,7 @@ questions:
 
 # ------------------------ Agri Stack exchange ------------------------
 - variable: composite.consent.mode
-  description: "exchange (default): the partner's consent is checked at the exchange Consent Manager, and each registry gets its own consent receipt (Agri Stack exchange install). passthrough: the partner's consent goes to each registry unchanged, so each registry's Consent Manager needs a binding for every partner."
+  description: "exchange (default): the partner's consent is checked at the exchange Consent Manager, and each registry gets its own consent token (Agri Stack exchange install). passthrough: the partner's consent goes to each registry unchanged, so each registry's Consent Manager needs a binding for every partner."
   type: enum
   options:
     - exchange

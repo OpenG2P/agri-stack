@@ -105,7 +105,8 @@ class Settings(IamSettings):
     # unchanged; each registry validates it with its own Consent Manager.
     # exchange: the composite first validates the partner's consent at the
     # exchange Consent Manager (consent_exchange_cm_url) asking for consent
-    # receipts, and sends each registry its own controller's receipt instead.
+    # tokens (short-lived, one per registry and query; "receipts" in the CM API),
+    # and sends each registry its own controller's token instead.
     consent_mode: Literal["passthrough", "exchange"] = "passthrough"
     # Exchange Consent Manager partner-api base URL (…/consent/v1/validate is
     # appended), e.g. http://commons-services-consent-manager-partner-api.

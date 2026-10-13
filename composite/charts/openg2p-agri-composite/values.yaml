@@ -126,14 +126,15 @@ composite:
   # ── Consent mode ─────────────────────────────────────────────────────────
   # exchange (default; Agri Stack exchange install): the composite first
   # validates the consent at the exchange Consent Manager, which issues one
-  # signed consent receipt per registry; each registry gets its own receipt.
+  # signed, short-lived consent token per registry and query; each registry
+  # gets its own token.
   # passthrough (a single install): the partner's consent JWS goes to each
   # registry unchanged; each registry validates it with its own Consent Manager.
-  # The composite's partner ID must be a receipt presenter at that CM, and each
-  # department CM must trust the exchange CM as a receipt issuer.
+  # The composite's partner ID must be a token presenter at that CM, and each
+  # department CM must trust the exchange CM as a token issuer.
   consent:
     # exchange (default): the partner's consent is checked at the exchange Consent
-    # Manager, which gives each registry its own consent receipt (Agri Stack
+    # Manager, which gives each registry its own consent token (Agri Stack
     # exchange install). passthrough: the partner's consent goes to each registry
     # unchanged, so every registry's CM needs a binding for every partner (a single
     # install where the registries share the composite's commons).

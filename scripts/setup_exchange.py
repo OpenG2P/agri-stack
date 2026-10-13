@@ -28,14 +28,14 @@ Steps
                   exchange consent mode: in each department CM, a binding and policy for the
                     composite (audience = its partner ID) per registry, with the use cases'
                     scopes and purposes; and the department CM must trust the exchange CM's
-                    receipts (checked, not set: it is a Helm value).
+                    consent tokens (checked, not set: it is a Helm value).
   5. Apply      after a typed "yes" (or --yes): the PM requests (raised and approved), the CM
                 bindings and policies, the Secret and a restart of the composite.
 
 Partners (e.g. a bank) are not set up here: they onboard through PM and the CM, as
 scripts/partner_test.py shows.
 
-Exit codes: 0 ok, 1 error, 2 a decision is needed (receipt trust, AWE approval, a key conflict,
+Exit codes: 0 ok, 1 error, 2 a decision is needed (consent-token trust, AWE approval, a key conflict,
 writes not confirmed).
 Needs: pip install -r scripts/requirements.txt
 """
@@ -283,9 +283,9 @@ def trusted_issuers(value: str) -> List[dict]:
 
 def receipt_trust_gap(*, exchange_issuer: str, presenters: List[str], composite_id: str,
                       dept_trusted: List[dict], dept_ns: str, exchange_ns: str) -> Optional[str]:
-    """Why a department CM would refuse the exchange CM's receipts, or None when it accepts them."""
+    """Why a department CM would refuse the exchange CM's consent tokens, or None when it accepts them."""
     if not exchange_issuer or composite_id not in presenters:
-        return (f"the exchange CM in {exchange_ns} does not issue receipts to {composite_id} (needs "
+        return (f"the exchange CM in {exchange_ns} does not issue consent tokens to {composite_id} (needs "
                 f"global.agriStackExchange.issuer and receiptPresenters [{composite_id}] in its CM values)")
     for t in dept_trusted:
         if t.get("issuer") == exchange_issuer:
@@ -293,7 +293,7 @@ def receipt_trust_gap(*, exchange_issuer: str, presenters: List[str], composite_
                 return (f"the CM in {dept_ns} trusts {exchange_issuer} only for presenter {t['presenter']}, "
                         f"not {composite_id}")
             return None
-    return (f"the CM in {dept_ns} does not trust receipts from {exchange_issuer} (set "
+    return (f"the CM in {dept_ns} does not trust consent tokens from {exchange_issuer} (set "
             f"global.agriStackExchange.trustedIssuer: issuer {exchange_issuer}, jwksUrl = the {exchange_ns} CM "
             f"partner API's /.well-known/jwks.json, presenter {composite_id})")
 
@@ -510,14 +510,14 @@ class Setup:
             info(f"CM             admin API svc/{c.cm_svc}:{c.cm_port}, role {c.cm_role}, issuer {c.cm_issuer}, "
                  f"AWE approval of policies {'ON' if c.cm_awe_enabled else 'off'}")
             if c.cm_receipt_issuer or c.cm_trusted_issuers:
-                info(f"               receipts: issues as {c.cm_receipt_issuer or '-'} to {c.cm_receipt_presenters or '-'}; "
+                info(f"               consent tokens: issues as {c.cm_receipt_issuer or '-'} to {c.cm_receipt_presenters or '-'}; "
                      f"trusts {[x.get('issuer') for x in c.cm_trusted_issuers] or '-'}")
             for label, name in (("PM admin client", c.pm_client_id), ("CM admin client", c.cm_client_id)):
                 data = site.kube.secret(name)
                 info(f"{label:16}{site.ns}/secret/{name}: {'MISSING' if data is None else 'keys ' + str(sorted(data))}")
 
         if t.consent_mode == "exchange":
-            # Every department must accept the exchange CM's receipts.
+            # Every department must accept the exchange CM's consent tokens.
             for site in self.sites:
                 if site.controllers and not site.own:
                     gap = receipt_trust_gap(exchange_issuer=t.cm_receipt_issuer, presenters=t.cm_receipt_presenters,
@@ -583,7 +583,7 @@ class Setup:
                            "--pm-client-id / --cm-client-id", kit.EXIT_DECISION)
 
     def _cm_needed(self, site: Site) -> bool:
-        """A namespace that serves registries checks the exchange's receipts for the composite at its CM."""
+        """A namespace that serves registries checks the exchange's consent tokens for the composite at its CM."""
         return self.t.consent_mode == "exchange" and bool(site.controllers)
 
     # 3. use cases ------------------------------------------------------------

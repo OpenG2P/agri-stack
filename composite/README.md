@@ -1,4 +1,4 @@
-# Open Agri Stack use-case composite
+# Agri Stack use-case composite
 
 The service, Helm chart (`charts/`), use cases (`use-cases/`) and console (`ui/`). Test and uninstall scripts are in the repository's top-level `scripts/`.
 

@@ -2,8 +2,13 @@ questions:
 # ------------------------------ General -----------------------------
 # Use cases are not in this form: edit composite.useCases in the "Edit YAML"
 # view of the values, or set composite.existingUseCasesConfigMap.
+- variable: global.baseDomain
+  description: Domain every hostname sits under (<service>.<Base Domain>). Use the same value as the commons install. Defaults to <namespace>.openg2p.org.
+  type: string
+  label: Base Domain
+  group: General
 - variable: global.compositeHostname
-  description: Public hostname partners call (Istio internal gateway). The namespace segment defaults to the install namespace.
+  description: Public hostname partners call (Istio internal gateway). Defaults to agri-composite.<Base Domain>.
   type: string
   label: Composite Hostname
   group: General
@@ -83,7 +88,7 @@ questions:
 - variable: composite.corsAllowOrigins
   description: Browser origins allowed to call the Composite (comma-separated), by default the Consent Manager's partner portal for its use-case pages. Empty for none.
   type: string
-  default: https://consent-partner-portal.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org
+  default: https://consent-partner-portal.{{ tpl .Values.global.baseDomain $ }}
   label: Allowed Browser Origins (CORS)
   group: Agri Stack exchange
 
@@ -116,7 +121,7 @@ questions:
   group: Console
   show_if: console.enabled=true
 - variable: console.iam.publicUrl
-  description: IAM staff portal API as the browser reaches it (console login). Defaults to https://staff-iam.<namespace>.openg2p.org.
+  description: IAM staff portal API as the browser reaches it (console login). Defaults to https://staff-iam.<Base Domain>.
   type: string
   label: IAM Staff API URL (public)
   group: Console
@@ -136,7 +141,7 @@ questions:
   group: Console
   show_if: console.enabled=true
 - variable: console.iam.cookieDomain
-  description: Parent domain of the staff login cookies, shared with the IAM staff API. Defaults to .<namespace>.openg2p.org.
+  description: Parent domain of the staff login cookies, shared with the IAM staff API. Defaults to .<Base Domain>.
   type: string
   label: Cookie Domain
   group: Console
@@ -163,13 +168,13 @@ questions:
   group: Console
   show_if: console.enabled=true
 - variable: console.pmPortalUrl
-  description: Partner Management portal link shown in the console. Defaults to https://partner-management.<namespace>.openg2p.org.
+  description: Partner Management portal link shown in the console. Defaults to https://partner-management.<Base Domain>.
   type: string
   label: Partner Management Portal URL
   group: Console
   show_if: console.enabled=true
 - variable: console.cmPortalUrl
-  description: Consent Manager portal link shown in the console. Defaults to https://consent-manager.<namespace>.openg2p.org.
+  description: Consent Manager portal link shown in the console. Defaults to https://consent-manager.<Base Domain>.
   type: string
   label: Consent Manager Portal URL
   group: Console

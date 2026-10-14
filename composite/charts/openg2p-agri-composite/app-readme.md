@@ -14,7 +14,7 @@ in the **Edit YAML** view of the values (one entry per use case), or point
 `composite.existingUseCasesConfigMap` at your own ConfigMap. Running pods pick up changes within about
 a minute, without a restart.
 
-Full documentation: [Open Agri Stack](https://docs.openg2p.org/open-agri-stack) on the OpenG2P documentation site.
+Full documentation: [Open Agri Stack](https://docs.openg2p.org/products/open-agri-stack) on the OpenG2P documentation site.
 
 **Console** (on by default; `console.enabled: false` turns it off): a read-only staff console showing the use cases, registries
 and a call log (outcomes and timings, no partner data). Untick **Enable Console** in the Console group

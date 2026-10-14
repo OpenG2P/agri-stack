@@ -1,9 +1,12 @@
 global:
   namespace: "" # empty => the install namespace (.Release.Namespace)
+  # Domain every hostname sits under: <service>.<baseDomain>. Use the same
+  # value as the commons install (Base Domain). Rendered with tpl.
+  baseDomain: '{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
 
   # Public hostname partners call (outside the cluster), through the Istio
   # "internal" gateway like the registries' partner APIs.
-  compositeHostname: 'agri-composite.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  compositeHostname: 'agri-composite.{{ tpl .Values.global.baseDomain $ }}'
 
   # The composite's own Partner Management ID: header.sender_id towards the
   # registries and in responses; partners send it as header.receiver_id.
@@ -17,11 +20,11 @@ global:
 
   # ── Console (used only when console.enabled) ──────────────────────────────
   # Public hostname of the staff console (Istio internal gateway).
-  consoleHostname: 'agri-composite-console.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  consoleHostname: 'agri-composite-console.{{ tpl .Values.global.baseDomain $ }}'
   # Public IAM staff API (the browser logs in through it), as commons serves it.
-  staffIamHostname: 'staff-iam.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  staffIamHostname: 'staff-iam.{{ tpl .Values.global.baseDomain $ }}'
   # Parent domain of the staff login cookies, shared with the IAM staff API.
-  consoleCookieDomain: '.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  consoleCookieDomain: '.{{ tpl .Values.global.baseDomain $ }}'
 
 composite:
   enabled: true
@@ -152,7 +155,7 @@ composite:
   # Browser origins allowed to call the composite's APIs (comma-separated, templated):
   # by default the Consent Manager's partner portal, for its use-case pages.
   # Empty: none (no CORS headers).
-  corsAllowOrigins: 'https://consent-partner-portal.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  corsAllowOrigins: 'https://consent-partner-portal.{{ tpl .Values.global.baseDomain $ }}'
   existingUseCasesConfigMap: ""
   useCasesMountPath: /app/config/use-cases
   useCasesReloadSeconds: 30
@@ -429,8 +432,8 @@ console:
     csrfEnabled: true
 
   # Links shown in the console.
-  pmPortalUrl: 'https://partner-management.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
-  cmPortalUrl: 'https://consent-manager.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  pmPortalUrl: 'https://partner-management.{{ tpl .Values.global.baseDomain $ }}'
+  cmPortalUrl: 'https://consent-manager.{{ tpl .Values.global.baseDomain $ }}'
   # Call log rows older than this are deleted (0 keeps everything).
   activityRetentionDays: 90
   # Registry data scope catalogues are cached this long (seconds).

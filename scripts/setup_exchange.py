@@ -286,7 +286,7 @@ def receipt_trust_gap(*, exchange_issuer: str, presenters: List[str], composite_
     """Why a department CM would refuse the exchange CM's consent tokens, or None when it accepts them."""
     if not exchange_issuer or composite_id not in presenters:
         return (f"the exchange CM in {exchange_ns} does not issue consent tokens to {composite_id} (choose "
-                f"Agri Stack Exchange Role: exchange in its commons-services form; presenter {composite_id})")
+                f"Exchange Role: exchange in its commons-services form; presenter {composite_id})")
     for t in dept_trusted:
         if t.get("issuer") == exchange_issuer:
             if t.get("presenter") and t["presenter"] != composite_id:
@@ -294,7 +294,7 @@ def receipt_trust_gap(*, exchange_issuer: str, presenters: List[str], composite_
                         f"not {composite_id}")
             return None
     return (f"the CM in {dept_ns} does not trust consent tokens from {exchange_issuer} (choose "
-            f"Agri Stack Exchange Role: department in its commons-services form, with the {exchange_ns} domain, "
+            f"Exchange Role: department in its commons-services form, with the {exchange_ns} domain, "
             f"issuer {exchange_issuer}, presenter {composite_id})")
 
 

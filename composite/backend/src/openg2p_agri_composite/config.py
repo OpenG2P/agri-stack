@@ -33,13 +33,20 @@ class Settings(IamSettings):
 
     openapi_title: str = "OpenG2P Agri Stack Composite"
     openapi_description: str = """
-        Agri Stack use-case composite.
+Agri Stack use-case Composite.
 
-        Serves approved use cases (configuration, not code) by querying several
-        registries over DCI with the partner's consent and returning one signed
-        response. No partner data is stored (the console's call log holds
-        outcomes and timings only).
-        """
+Serves approved use cases (configuration, not code) by querying several
+registries over DCI with the subject's consent and returning one signed
+response. No partner data is stored (the console's call log holds outcomes
+and timings only).
+
+**Use cases** (partner API): every query is a signed envelope; the detached
+JWS is verified against the partner's keys in Partner Management, and the
+Composite signs every response. The describe endpoints need no signature.
+
+**Console (staff)**: read-only API for the Composite's console, behind a staff
+login with the `composite:view` permission; present only when the console is on.
+"""
     openapi_version: str = __version__
 
     # No database unless the console is on. "none://" stops the base Settings

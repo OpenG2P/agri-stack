@@ -29,6 +29,9 @@
 #   --setup-only    only step 1;  --test-only  only steps 2-3
 #   --dry-run       step 1 as a dry run (no writes) and stop
 #
+# The whole run is also written to scripts/out/exchange-test-<namespace>-<time>.log
+# (git-ignored), next to the response JSON. Secrets are never printed.
+#
 # Exit code: that of the step that failed, else partner_test.py's (0 ok).
 
 set -euo pipefail
@@ -45,7 +48,7 @@ DRY_RUN=false
 PYTHON="${PYTHON:-python3}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-usage() { sed -n '2,32p' "$0"; exit 1; }
+usage() { sed -n '2,35p' "$0"; exit 1; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,6 +67,13 @@ while [[ $# -gt 0 ]]; do
 done
 BASE_DOMAIN="${BASE_DOMAIN:-$NAMESPACE.openg2p.org}"
 [[ ${#REGISTRIES[@]} -eq 0 ]] && REGISTRIES=("farmer-registry=trial" "crop-sown-registry=dept1")
+
+# Everything printed from here on also goes to a log file (colours stripped).
+OUT_DIR="$HERE/out"
+mkdir -p "$OUT_DIR" && chmod 700 "$OUT_DIR"
+LOG="$OUT_DIR/exchange-test-$NAMESPACE-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee >(perl -pe 'BEGIN { $| = 1 } s/\e\[[0-9;]*m//g' >> "$LOG")) 2>&1
+trap 'echo "   log: $LOG"' EXIT
 
 KUBECTL=(kubectl -n "$NAMESPACE")
 [[ -n "$CONTEXT" ]] && KUBECTL=(kubectl --context "$CONTEXT" -n "$NAMESPACE")

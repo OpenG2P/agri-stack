@@ -11,10 +11,23 @@ from ..config import Settings
 from ..core.activity import OUTCOMES
 from ..core.catalogue import catalogue_url
 from ..services.composite_service import CompositeService
+from .api_docs import CONSOLE_RESPONSES, ROUTER_RESPONSES, ApiError
 
 _config = Settings.get_config()
 
 VIEW = "composite:view"
+
+
+_CONSOLE_AUTH = (
+    "\n\nStaff only: needs a console login (IAM session cookie or `Authorization: Bearer`) with the "
+    "`composite:view` permission. Present only when the console is on (`console_enabled` and a database)."
+)
+_NOT_FOUND = {404: {"model": ApiError, "description": "Not found (`unknown_use_case`, `unknown_registry`)."}}
+_NOT_FOUND_OR_INVALID = {
+    400: {"model": ApiError, "description": "`invalid_use_case`: the reference is malformed."},
+    **_NOT_FOUND,
+}
+_INVALID_OUTCOME = {400: {"model": ApiError, "description": "`invalid_outcome`: unknown `outcome` filter."}}
 
 
 def _not_found(code: str, message: str) -> JSONResponse:
@@ -37,17 +50,38 @@ class AdminController(BaseController):
         super().__init__(**kwargs)
         self.service = CompositeService.get_component()
         self.router.prefix += "/composite/v1/admin"
-        self.router.tags += ["Console"]
-        for path, handler in (
-            ("/overview", self.overview),
-            ("/use-cases", self.list_use_cases),
-            ("/use-cases/{use_case}", self.get_use_case),
-            ("/registries", self.list_registries),
-            ("/registries/{registry_id}/data-scopes", self.get_data_scopes),
-            ("/partners", self.list_partners),
-            ("/activity", self.list_activity),
+        self.router.tags += ["Console (staff)"]
+        # Documented per route (the framework default lists 401/403/404 on every route).
+        self.router.responses = dict(ROUTER_RESPONSES)
+        for path, handler, summary, description, extra in (
+            ("/overview", self.overview, "Overview",
+             "The Composite's settings (partner ID, consent mode, Partner Management URL, signing key ID), "
+             "counts of use cases, registries and partners, and the last 24 hours of calls.", {}),
+            ("/use-cases", self.list_use_cases, "List use cases (console)",
+             "Published use cases with their allowed partners and file name, and the use-case files that "
+             "failed to load (with the error).", {}),
+            ("/use-cases/{use_case}", self.get_use_case, "Get a use case (console)",
+             "One published use case (`name` or `name@major`) with its response mapping, derived fields "
+             "and the YAML file text.", _NOT_FOUND_OR_INVALID),
+            ("/registries", self.list_registries, "List registries",
+             "The configured registries: search and catalogue URLs, Partner Management partner ID, whether "
+             "the catalogue answered, the number of data scopes, and the use cases that query each.", {}),
+            ("/registries/{registry_id}/data-scopes", self.get_data_scopes, "Get a registry's data scopes",
+             "The registry's data scope catalogue (each scope's current version and fields) and the use-case "
+             "sources that ask for each scope. Cached; `refresh=true` fetches it again.", _NOT_FOUND),
+            ("/partners", self.list_partners, "List partners",
+             "Partners named in published use cases, the use cases each may call, and the keys "
+             "Partner Management serves for each (key ID and algorithm).", {}),
+            ("/activity", self.list_activity, "List calls",
+             "The call log, newest first: use case, partner, HTTP status, outcome, reason, duration and "
+             "per-source statuses. No request or response data is stored. `total` stops at 10000 "
+             "(`total_capped` is then true).", _INVALID_OUTCOME),
         ):
-            self.router.add_api_route(path, handler, methods=["GET"])
+            self.router.add_api_route(
+                path, handler, methods=["GET"], summary=summary,
+                description=description + _CONSOLE_AUTH,
+                responses={**CONSOLE_RESPONSES, **extra},
+            )
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -138,7 +172,10 @@ class AdminController(BaseController):
         return {"registries": out}
 
     @require_permissions(VIEW)
-    async def get_data_scopes(self, registry_id: str, refresh: bool = False):
+    async def get_data_scopes(
+        self, registry_id: str,
+        refresh: bool = Query(False, description="Fetch the catalogue again instead of using the cache."),
+    ):
         """The registry's data scopes (current version's fields), and which use case sources use each."""
         if registry_id not in self.service.engine.settings.registries:
             return _not_found("unknown_registry", f"no registry '{registry_id}' is configured")
@@ -185,11 +222,11 @@ class AdminController(BaseController):
     @require_permissions(VIEW)
     async def list_activity(
         self,
-        limit: int = Query(50, ge=1, le=200),
-        offset: int = Query(0, ge=0),
-        partner: Optional[str] = None,
-        use_case: Optional[str] = None,
-        outcome: Optional[str] = None,
+        limit: int = Query(50, ge=1, le=200, description="Rows per page."),
+        offset: int = Query(0, ge=0, description="Rows to skip."),
+        partner: Optional[str] = Query(None, description="Only this partner's calls."),
+        use_case: Optional[str] = Query(None, description="Only calls to this use case (`name@major`)."),
+        outcome: Optional[str] = Query(None, description="Only `success`, `denied` or `failure`."),
     ):
         """The call log, newest first."""
         activity = self.service.activity

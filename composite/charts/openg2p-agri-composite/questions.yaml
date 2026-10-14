@@ -26,7 +26,7 @@ questions:
 
 # ---------------------------- Integration ---------------------------
 - variable: global.compositePartnerId
-  description: The composite's partner ID in Partner Management (its key must be registered there). Registries see it as the sender; partners address it as the receiver.
+  description: The Composite's partner ID in Partner Management (its key must be registered there). Registries see it as the sender; partners address it as the receiver.
   type: string
   default: agri-composite
   label: Composite Partner ID
@@ -81,7 +81,7 @@ questions:
   group: Agri Stack exchange
   show_if: composite.consent.mode=exchange
 - variable: composite.corsAllowOrigins
-  description: Browser origins allowed to call the composite (comma-separated), by default the Consent Manager's partner portal for its use-case pages. Empty for none.
+  description: Browser origins allowed to call the Composite (comma-separated), by default the Consent Manager's partner portal for its use-case pages. Empty for none.
   type: string
   default: https://consent-partner-portal.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org
   label: Allowed Browser Origins (CORS)
@@ -184,7 +184,7 @@ questions:
 
 # ---------------------------- Signing key ---------------------------
 - variable: composite.signingKey.secretName
-  description: "Secret holding the composite's signing key: keys composite.p12 (file), password, and optionally kid and algorithm. Create it before installing (Storage → Secrets, or kubectl create secret generic)."
+  description: "Secret holding the Composite's signing key: keys composite.p12 (file), password, and optionally kid and algorithm. Create it before installing (Storage → Secrets, or kubectl create secret generic)."
   type: string
   default: agri-composite-signing
   label: Signing Key Secret

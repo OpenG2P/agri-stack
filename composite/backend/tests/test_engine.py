@@ -139,7 +139,7 @@ async def test_happy_path_by_fan(h):
     assert data["farmer"]["name"]["surname"] == "Bekele"
     assert data["farmer"]["sex"] == "female"
     assert {i["identifier_type"] for i in data["farmer"]["identifiers"]} == {"UIN", "FARMER_ID"}
-    assert data["farmer"]["main_crops"] == ["CROP_WHEAT", "CROP_TEFF"]
+    assert data["farmer"]["main_crops"] == ["CROP_BREAD_WHEAT", "CROP_TEFF"]
     assert data["farmer"]["location"]["name"] == "Kebele 04"
     assert data["land"]["total_size"] == 1.75 and data["land"]["parcel_count"] == 2
     assert len(data["crops"]["seasons"]) == 2

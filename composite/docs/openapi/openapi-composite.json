@@ -229,7 +229,7 @@
                         "sex": "female",
                         "birth_date": "1985-03-02",
                         "main_crops": [
-                          "CROP_WHEAT",
+                          "CROP_BREAD_WHEAT",
                           "CROP_TEFF"
                         ]
                       },

@@ -134,12 +134,12 @@ FARMER_RECORD = {
         {"land_size": 1.25, "measurement": "Hectare", "land_tenure": "Owned"},
         {"land_size": 0.5, "measurement": "Hectare", "land_tenure": "Crop share"},
     ],
-    "main_crops": ["CROP_WHEAT", "CROP_TEFF"],
+    "main_crops": ["CROP_BREAD_WHEAT", "CROP_TEFF"],
 }
 
 CROP_SEASONS = [
     {"@type": "spdci-extensions-agri:CropSeason", "farmer_reference": {"farmer_id": FARMER_ID},
-     "crop_season": {"crop": "CROP_WHEAT", "crop_year": 2019, "season": "SEASON_MEHER", "plot_id": "P1"},
+     "crop_season": {"crop": "CROP_BREAD_WHEAT", "crop_year": 2019, "season": "SEASON_MEHER", "plot_id": "P1"},
      "measures": {"area_sown_ha": 0.75}},
     {"@type": "spdci-extensions-agri:CropSeason", "farmer_reference": {"farmer_id": FARMER_ID},
      "crop_season": {"crop": "CROP_TEFF", "crop_year": 2019, "season": "SEASON_MEHER", "plot_id": "P2"},
@@ -149,7 +149,7 @@ CROP_SEASONS = [
 SEASON_SUMMARY = [
     {"@type": "spdci-extensions-agri:ActivityAggregate", "farmer_reference": {"farmer_id": FARMER_ID},
      "crop_season": {"aggregate_type": "FARMER_SEASON_SUMMARY", "crop_year": 2019, "season": "SEASON_MEHER"},
-     "measures": {"area_sown_ha": 1.15, "by_crop": {"CROP_WHEAT": {"area_sown_ha": 0.75}}}},
+     "measures": {"area_sown_ha": 1.15, "by_crop": {"CROP_BREAD_WHEAT": {"area_sown_ha": 0.75}}}},
 ]
 
 

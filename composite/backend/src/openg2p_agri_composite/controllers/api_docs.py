@@ -311,7 +311,7 @@ QUERY_RESPONSE_EXAMPLE = {
         },
         "data": {
             "farmer": {"name": {"given_name": "Almaz", "surname": "Bekele"}, "sex": "female",
-                       "birth_date": "1985-03-02", "main_crops": ["CROP_WHEAT", "CROP_TEFF"]},
+                       "birth_date": "1985-03-02", "main_crops": ["CROP_BREAD_WHEAT", "CROP_TEFF"]},
             "land": {"parcel_count": 2, "total_size": 1.75,
                      "parcels": [{"land_size": 1.25, "measurement": "Hectare", "land_tenure": "Owned"},
                                  {"land_size": 0.5, "measurement": "Hectare", "land_tenure": "Crop share"}]},

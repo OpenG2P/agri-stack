@@ -139,8 +139,10 @@ composite:
     # exchange (default): the partner's consent is checked at the exchange Consent
     # Manager, which gives each registry its own consent token (Agri Stack
     # exchange install). passthrough: the partner's consent goes to each registry
-    # unchanged, so every registry's CM needs a binding for every partner (a single
-    # install where the registries share the composite's commons).
+    # unchanged, so every registry's Partner Management needs a scope policy for every
+    # partner (a single install where the registries share the composite's commons).
+    # Either way, a partner calls a use case only when its use-case policy in the
+    # Composite's Partner Management grants it (name@major).
     mode: exchange
     # Exchange Consent Manager partner-api base URL (/consent/v1/validate is
     # appended): the CM of the composite's own namespace. Used only when mode is exchange.
@@ -182,6 +184,9 @@ composite:
       #
       # Template note: keep a space between consecutive braces ("} }", "{ {") so
       # literal JSON never reads as a Jinja "{{ … }}".
+      #
+      # Who may call it is not set here: a partner's use-case policy in Partner Management
+      # grants it (allowed_use_cases: [loan-profile@1]).
 
       use_case: loan-profile
       version: 1.0.0
@@ -197,9 +202,6 @@ composite:
       purpose: credit-assessment
       consent:
         required: true
-
-      # Interim stand-in for the PM policy association (PM has no policies yet).
-      allowed_partners: [bank-a]
 
       input:
         subject:
@@ -348,6 +350,12 @@ composite:
     # Partner key cache (PM): soft TTL, last-known-good during a PM outage.
     AGRI_COMPOSITE_PARTNER_KEY_CACHE_TTL_SECONDS: "300"
     AGRI_COMPOSITE_PARTNER_KEY_HARD_TTL_SECONDS: "21600"
+    # Partner use-case grants (PM use-case policies), cached per pod: soft TTL (also
+    # bounded by PM's Cache-Control; how long a revoked grant may still work), last
+    # answer kept during a PM outage (hard TTL, then 503), "no grant" cached (negative TTL).
+    AGRI_COMPOSITE_PARTNER_POLICY_CACHE_TTL_SECONDS: "60"
+    AGRI_COMPOSITE_PARTNER_POLICY_HARD_TTL_SECONDS: "21600"
+    AGRI_COMPOSITE_PARTNER_POLICY_NEGATIVE_TTL_SECONDS: "30"
 
   envVarsFrom:
     AGRI_COMPOSITE_SIGNING_P12_PASSWORD:

@@ -87,7 +87,7 @@ export default function OverviewDashboard() {
                                 href="/use-cases"
                             />
                             <StatTile label={t("nav_registries")} value={overview.registries} href="/registries" />
-                            <StatTile label={t("nav_partners")} value={overview.partners} href="/partners" />
+                            <StatTile label={t("nav_partners")} value={overview.partners ?? "—"} href="/partners" />
                         </div>
 
                         <div className="grid gap-6 xl:grid-cols-3">

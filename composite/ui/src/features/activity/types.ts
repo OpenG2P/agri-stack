@@ -23,6 +23,8 @@ export interface ActivityPage {
     /** true: the backend stopped counting at `total` (10000), which means "10000 or more". */
     total_capped?: boolean;
     items: ActivityItem[];
+    /** Partner IDs (senders) in the call log: the partner filter's choices. */
+    partners?: string[];
 }
 
 export interface ActivityFilters {

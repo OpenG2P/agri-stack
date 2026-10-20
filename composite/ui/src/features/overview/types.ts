@@ -16,7 +16,8 @@ export interface Overview {
     signing_kid: string | null;
     use_cases: { published: number; errors: number };
     registries: number;
-    partners: number;
+    /** Partners granted a published use case in Partner Management; null when PM could not be read. */
+    partners: number | null;
     activity_24h: { calls: number; failed: number } | null;
     links: PortalLinks;
 }

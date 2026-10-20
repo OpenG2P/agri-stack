@@ -253,6 +253,15 @@ class ActivityStore:
         ]
         return min(total, COUNT_CAP), total > COUNT_CAP, items
 
+    async def partners(self, limit: int = 500) -> List[str]:
+        """The partner IDs (senders) in the log, sorted: the console's partner filter."""
+        async with self._session_maker() as session:
+            rows = (await session.execute(
+                select(ActivityRow.partner_id).where(ActivityRow.partner_id.is_not(None)).distinct()
+                .order_by(ActivityRow.partner_id).limit(limit)
+            )).scalars().all()
+        return list(rows)
+
     async def summary(self, hours: int = 24) -> Dict[str, int]:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
         async with self._session_maker() as session:

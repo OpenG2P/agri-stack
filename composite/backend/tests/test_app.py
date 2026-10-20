@@ -20,12 +20,15 @@ def test_app_end_to_end(tmp_path, composite_p12):
         from datetime import datetime, timezone
         import httpx
         sys.path.insert(0, {os.path.dirname(__file__)!r})
-        from conftest import Key, RegistryStub, FR_URL, CSR_URL, FAN, SCOPES
+        from conftest import Key, PolicyStub, RegistryStub, FR_URL, CSR_URL, FAN, SCOPES
 
         partner = Key("k1")
         from openg2p_agri_composite.services import composite_service as cs
         orig_init = cs.CompositeService.__init__
-        stub = RegistryStub()
+        registries = RegistryStub()
+        policies = PolicyStub()
+        def stub(request):
+            return policies(request) if policies.handles(request) else registries(request)
         def pm(request):
             if request.url.path.endswith("/PARTNER_BANK_A"):
                 return httpx.Response(200, json={{"keys": [{{"kid": "k1", "algorithm": "ES256", "public_key": partner.public_pem}}]}})

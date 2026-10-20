@@ -19,6 +19,7 @@ import { registryHref } from "@/features/registries/api";
 import { formatValue } from "@/shared/utils/format";
 import { useUseCase } from "../hooks";
 import type { UseCaseDetail } from "../types";
+import GrantedTo from "./GrantedTo";
 
 function Header({ useCase }: { useCase: UseCaseDetail }) {
     const t = useTranslations();
@@ -243,8 +244,8 @@ export default function UseCaseDetailView({ useCaseRef }: { useCaseRef: string }
                     <OutputFields useCase={useCase} />
                     <div className="grid gap-6 lg:grid-cols-2">
                         <Panel>
-                            <SectionTitle title={t("col_allowed_partners")} hint={t("allowed_partners_hint")} />
-                            <ChipList items={useCase.allowed_partners} mono empty={t("none")} />
+                            <SectionTitle title={t("col_granted_to")} hint={t("granted_to_hint")} />
+                            <GrantedTo useCase={useCase} />
                         </Panel>
                         <Panel>
                             <SectionTitle title={t("execution")} />

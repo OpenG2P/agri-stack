@@ -88,7 +88,7 @@ login with the `composite:view` permission; present only when the console is on.
     signing_kid: str = ""  # blank → the certificate's SHA-256 thumbprint
     signing_algorithm: str = "auto"  # auto = from the key type (EC → ES256, Ed25519 → EdDSA, RSA → RS256)
 
-    # Partner Management (partner public keys, cached per pod).
+    # Partner Management (partner public keys and policies, cached per pod).
     partner_mgmt_api_url: str = "http://commons-services-pm-partner-api"
     crypto_allowed_algorithms: str = "EdDSA,ES256,RS256"
     partner_key_cache_ttl_seconds: int = 300
@@ -96,6 +96,17 @@ login with the `composite:view` permission; present only when the console is on.
     partner_key_negative_ttl_seconds: int = 30
     partner_key_refresh_cooldown_seconds: int = 10
     partner_key_fetch_timeout_seconds: float = 3.0
+
+    # Partner use-case grants: each partner's use-case policy in Partner Management
+    # (GET /policies/PARTNER_<SENDER>?data_controller=), cached per pod. Soft TTL:
+    # refreshed after min(this, PM's Cache-Control max-age) — how long a revoked grant
+    # may still work. Hard TTL: the last answer is used this long while PM is down,
+    # then calls fail (503). Negative TTL: "no grant" (404) is cached this long.
+    partner_policy_cache_ttl_seconds: int = 60
+    partner_policy_hard_ttl_seconds: int = 21600
+    partner_policy_negative_ttl_seconds: int = 30
+    partner_policy_refresh_cooldown_seconds: int = 10
+    partner_policy_fetch_timeout_seconds: float = 3.0
 
     # Partner request freshness (header.message_ts within now ± this). 0 disables.
     request_max_skew_seconds: int = 300

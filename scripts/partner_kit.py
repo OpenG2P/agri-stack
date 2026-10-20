@@ -12,9 +12,13 @@ plain files.
   python partner_kit.py describe --url https://agri-composite.<ns>.openg2p.org
 
 Identifiers: a partner signs DCI envelopes with ``header.sender_id`` = its
-partner ID (e.g. ``bank-a``); Partner Management holds its key under
-``PARTNER_<ID>`` upper-cased with '-' → '_' (e.g. ``PARTNER_BANK_A``), which is
-where the composite and the registries look it up.
+partner ID (e.g. ``bank-a``); Partner Management holds its key and its policies
+under ``PARTNER_<ID>`` upper-cased with '-' → '_' (e.g. ``PARTNER_BANK_A``), which
+is where the composite, the Consent Managers and the registries look them up.
+
+Policies (in Partner Management, raised and approved as PM requests): a partner's
+**use-case policy** (no data controller) grants use cases (``name@major``) at the
+exchange; a **scope policy** per data controller grants a registry's data scopes.
 """
 
 import argparse
@@ -112,24 +116,38 @@ def load_p12_key(p12: bytes, password: str):
     return key
 
 
-def onboarding_payload(partner_id: str, label: str, key, kid: str) -> dict:
-    """PM staff API body for POST /partners/requests/onboarding."""
-    return {"partner_id": pm_reference(partner_id), "name": label, "org_name": label,
+def onboarding_payload(partner_id: str, label: str, key, kid: str, policies: Optional[List[dict]] = None) -> dict:
+    """PM staff API body for POST /partners/requests/onboarding; ``policies``: PolicyInputs made active on approval."""
+    body = {"partner_id": pm_reference(partner_id), "name": label, "org_name": label,
             "description": "Agri Stack composite test (TEST)",
             "keys": [{"public_key": public_pem(key), "kid": kid, "algorithm": SIGNING_ALG}]}
+    if policies:
+        body["policies"] = [dict(p) for p in policies]
+    return body
 
 
-def binding_payload(audience: str, controller: str) -> dict:
-    """CM staff API body for POST /consent/v1/partners (one binding per controller)."""
-    return {"audience": audience, "controller_id": controller, "partner_mgmt_id": pm_reference(audience),
-            "name": f"TEST {audience} → {controller}"}
-
-
-def policy_payload(controller: str, purpose: str = DEFAULT_PURPOSE, scopes=None) -> dict:
-    """CM staff API body for PUT /consent/v1/partners/{id}/policy (scopes: default GRANTS[controller])."""
-    return {"allowed_data_scopes": list(GRANTS[controller] if scopes is None else scopes), "allowed_purposes": [purpose],
+def _policy_input(data_controller: Optional[str], scopes, use_cases, purposes) -> dict:
+    return {"data_controller": data_controller, "allowed_data_scopes": sorted(set(scopes)),
+            "allowed_use_cases": sorted(set(use_cases)), "allowed_purposes": sorted(set(purposes)),
             "allowed_subject_id_types": list(SUBJECT_ID_TYPES), "allowed_signing_algs": [SIGNING_ALG],
             "max_validity_duration": POLICY_MAX_VALIDITY, "fetch_type": "oneshot"}
+
+
+def scope_policy_payload(controller: str, purposes=(DEFAULT_PURPOSE,), scopes=None) -> dict:
+    """PM PolicyInput: a scope policy for one registry (scopes: default GRANTS[controller])."""
+    return _policy_input(controller, GRANTS[controller] if scopes is None else scopes, [], purposes)
+
+
+def use_case_policy_payload(use_cases, purposes=(DEFAULT_PURPOSE,)) -> dict:
+    """PM PolicyInput: a use-case policy (no data controller) granting use cases (``name@major``)."""
+    return _policy_input(None, [], use_cases, purposes)
+
+
+def policy_request_payload(partner_id: str, policies: List[dict], description: str = "") -> dict:
+    """PM staff API body for POST /partners/requests/policy (``partner_id``: the DCI partner ID or PM ID)."""
+    ref = partner_id if partner_id.startswith("PARTNER_") else pm_reference(partner_id)
+    return {"partner_id": ref, "description": description or f"{MANAGED_BY}: policies",
+            "policies": [dict(p) for p in policies]}
 
 
 def make_consent(key, *, partner: str, kid: str, subject: dict, purpose: str = DEFAULT_PURPOSE,
@@ -332,10 +350,14 @@ def duration_days(value: Optional[str]) -> Optional[float]:
 
 
 def policy_covers(policy: Optional[dict], needed: dict, subject_type: str) -> bool:
+    """The (active) policy allows everything ``needed`` (a PolicyInput) asks for."""
     if not policy or policy.get("status", "active") != "active":
         return False
-    if not set(needed["allowed_data_scopes"]) <= set(policy.get("allowed_data_scopes") or []):
+    if (policy.get("data_controller") or None) != (needed.get("data_controller") or None):
         return False
+    for field in ("allowed_data_scopes", "allowed_use_cases"):
+        if not set(needed.get(field) or []) <= set(policy.get(field) or []):
+            return False
     for field, values in (("allowed_purposes", needed["allowed_purposes"]),
                           ("allowed_subject_id_types", [subject_type]),
                           ("allowed_signing_algs", [SIGNING_ALG])):
@@ -351,48 +373,56 @@ def merged_policy(active: Optional[dict], needed: dict) -> dict:
     if not active:
         return dict(needed)
     out = dict(needed)
-    for field in ("allowed_data_scopes", "allowed_purposes", "allowed_subject_id_types", "allowed_signing_algs"):
-        out[field] = sorted(set(needed[field]) | set(active.get(field) or []))
+    for field in ("allowed_data_scopes", "allowed_use_cases", "allowed_purposes", "allowed_subject_id_types",
+                  "allowed_signing_algs"):
+        out[field] = sorted(set(needed.get(field) or []) | set(active.get(field) or []))
     old, new = duration_days(active.get("max_validity_duration")), duration_days(needed.get("max_validity_duration"))
     if active.get("max_validity_duration") and old is not None and new is not None and old > new:
         out["max_validity_duration"] = active["max_validity_duration"]
     return out
 
 
-def plan_cm(*, audience: str, pm_ref: str, needed: Dict[str, dict], bindings: List[dict],
-            policies: Dict[str, List[dict]], subject_type: str = "FAYDA_FAN") -> dict:
-    """CM bindings + policies for `audience`, one per controller in `needed` ({controller: policy body}).
+def policy_label(data_controller: Optional[str]) -> str:
+    return f"scope policy {data_controller}" if data_controller else "use-case policy"
 
-    bindings: GET /consent/v1/partners?audience=; policies: {binding id: GET .../{id}/policies}.
-    Returns {"actions": [...], "conflicts": [...], "ok": [controllers]}.
+
+def plan_pm_policies(*, needed: List[dict], active: List[dict], pending: List[dict],
+                     subject_type: str = "FAYDA_FAN") -> dict:
+    """The PM policies a partner still needs: one PolicyInput per data controller in ``needed``
+    (``data_controller`` null = the use-case policy).
+
+    active: the partner's active policies (staff GET /partners/{id}/policies); pending: its open
+    requests (status 'created'), whose ``proposed_policies`` may already carry what is needed.
+    Returns {"request": [PolicyInput to raise in one policy request (widened by the active
+    policy, never narrowed)], "approve": [open request IDs that carry it], "ok": [data
+    controllers already covered], "conflicts": [str]}.
     """
-    actions, conflicts, ok = [], [], []
-    for controller, policy in needed.items():
-        b = next((x for x in bindings if x.get("audience") == audience and x.get("controller_id") == controller), None)
-        if b is None:
-            actions.append({"op": "create_binding", "controller": controller})
-            actions.append({"op": "put_policy", "controller": controller, "body": policy})
+    request, approve, ok, conflicts = [], [], [], []
+    for body in needed:
+        dc = body.get("data_controller") or None
+        current = next((p for p in active if (p.get("data_controller") or None) == dc
+                        and p.get("status", "active") == "active"), None)
+        if policy_covers(current, body, subject_type):
+            ok.append(dc)
             continue
-        if b.get("partner_mgmt_id") and b["partner_mgmt_id"] != pm_ref:
-            conflicts.append(f"{audience} → {controller}: binding {b['id']} uses partner_mgmt_id "
-                             f"{b['partner_mgmt_id']}, not {pm_ref}")
+        open_req = proposal = None
+        for r in pending:
+            proposal = next((p for p in r.get("proposed_policies") or [] if (p.get("data_controller") or None) == dc),
+                            None)
+            if proposal is not None:
+                open_req = r
+                break
+        if open_req is not None:
+            if policy_covers({**proposal, "status": "active"}, body, subject_type):
+                if open_req["id"] not in approve:
+                    approve.append(open_req["id"])
+            else:
+                conflicts.append(f"{policy_label(dc)}: open {open_req.get('request_type')} request {open_req['id']} "
+                                 "proposes a policy that does not cover what is needed; approve or reject it in "
+                                 "Partner Management, then rerun")
             continue
-        if b.get("status") != "active":
-            actions.append({"op": "activate_binding", "controller": controller, "binding_id": b["id"]})
-        versions = policies.get(b["id"]) or []
-        active = next((p for p in versions if p.get("status") == "active"), None)
-        if policy_covers(active, policy, subject_type):
-            if b.get("status") == "active":
-                ok.append(controller)
-            continue
-        pending = [p for p in versions if p.get("status") == "pending"]
-        if pending:
-            conflicts.append(f"{audience} → {controller}: policy v{pending[0].get('version')} is pending AWE "
-                             f"approval (request {pending[0].get('awe_request_id')}); approve it, then rerun")
-            continue
-        actions.append({"op": "put_policy", "controller": controller, "binding_id": b["id"],
-                        "body": merged_policy(active, policy)})
-    return {"actions": actions, "conflicts": conflicts, "ok": ok}
+        request.append(merged_policy(current, body))
+    return {"request": request, "approve": approve, "ok": ok, "conflicts": conflicts}
 
 
 def describe_pm_action(ref: str, action: dict, kid: str) -> str:
@@ -408,15 +438,19 @@ def describe_pm_action(ref: str, action: dict, kid: str) -> str:
     return f"PM: {op} {ref}"
 
 
-def describe_cm_action(audience: str, action: dict) -> str:
-    op, controller = action["op"], action["controller"]
-    if op == "create_binding":
-        return f"CM: create binding {audience} → {controller} (partner_mgmt_id {pm_reference(audience)})"
-    if op == "activate_binding":
-        return f"CM: set binding {action['binding_id']} ({audience} → {controller}) active"
-    body = action["body"]
-    return (f"CM: put policy for {audience} → {controller}: scopes {body['allowed_data_scopes']}, "
-            f"purposes {body['allowed_purposes']}, id types {body['allowed_subject_id_types']}")
+def describe_policy(policy: dict) -> str:
+    what = (f"use cases {policy['allowed_use_cases']}" if not policy.get("data_controller")
+            else f"scopes {policy['allowed_data_scopes']}")
+    return (f"{policy_label(policy.get('data_controller'))}: {what}, purposes {policy['allowed_purposes']}, "
+            f"id types {policy['allowed_subject_id_types']}")
+
+
+def describe_policy_actions(ref: str, plan: dict) -> List[str]:
+    out = [f"PM: approve open request {rid} for {ref} (it carries the needed policy)" for rid in plan["approve"]]
+    if plan["request"]:
+        out.append(f"PM: policy request for {ref}, then approve it — "
+                   + "; ".join(describe_policy(p) for p in plan["request"]))
+    return out
 
 
 def signing_secret_manifest(name: str, namespace: str, keys: Dict[str, str], p12: bytes, password: str,
@@ -453,22 +487,22 @@ def cmd_keys(a):
                    "composite_kid": a.composite_kid}, fh, indent=2)
 
     print(f"Wrote {partner_key_path}, {p12_path} (password '{a.p12_password}'), composite.pub.pem, kit.json in {a.out}\n")
-    print("1. Partner Management — onboard both, then approve each request")
+    print("1. Partner Management (the exchange's) — onboard both, then approve each request")
     print("   (POST {pm-staff-portal-api}/partners/requests/onboarding, then POST /partners/requests/{id}/approve,")
-    print("    as a client with PM's partner_manager role):\n")
-    print(json.dumps(onboarding_payload(a.partner, f"TEST {a.partner}", partner, a.partner_kid), indent=2))
+    print("    as a client with PM's partner_manager role). The partner's request carries its use-case policy")
+    print("   (the use cases it may call, name@major):\n")
+    print(json.dumps(onboarding_payload(a.partner, f"TEST {a.partner}", partner, a.partner_kid,
+                                        [use_case_policy_payload([a.use_case], [a.purpose])]), indent=2))
     print(json.dumps(onboarding_payload(a.composite, "Agri Stack composite", composite, a.composite_kid), indent=2))
     print("\n2. The composite's signing key Secret (namespace of the composite):\n")
     print(f"   kubectl -n <ns> create secret generic agri-composite-signing \\\n"
           f"     --from-file=composite.p12={p12_path} --from-literal=password='{a.p12_password}' \\\n"
           f"     --from-literal=kid={a.composite_kid} --from-literal=algorithm=auto")
-    print("\n3. Consent Manager — bind the partner's audience to each registry with a policy")
-    print("   (POST {cm-staff-api}/consent/v1/partners, then PUT /consent/v1/partners/{id}/policy, admin role):\n")
+    print("\n3. Each registry's (department's) Partner Management — the composite's key (onboard as in 1) and")
+    print("   a scope policy per registry for it (POST /partners/requests/policy, then approve; in exchange")
+    print("   consent mode setup_exchange.py does both):\n")
     for controller in GRANTS:
-        print(f"   {controller}:")
-        print("   binding " + json.dumps(binding_payload(a.partner, controller)))
-        print("   policy  " + json.dumps(policy_payload(controller, a.purpose)))
-    print(f"\n4. The use case must allow the partner: allowed_partners: [{a.partner}] (loan-profile has bank-a).")
+        print("   " + json.dumps(policy_request_payload(a.composite, [scope_policy_payload(controller, [a.purpose])])))
 
 
 def _load_partner_key(a):
@@ -584,6 +618,7 @@ def main():
     k.add_argument("--p12-password", default="openg2p-test")
     k.add_argument("--days", type=int, default=365)
     k.add_argument("--force", action="store_true")
+    k.add_argument("--use-case", default="loan-profile@1", help="use case the partner's policy grants (name@major)")
     k.set_defaults(func=cmd_keys)
 
     for name, func, helptext in (("consent", cmd_consent, "print a partner-signed consent JWS"),

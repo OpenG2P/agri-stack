@@ -14,6 +14,7 @@ from ..core.catalogue import ScopeCatalogue
 from ..core.crypto import build_composite_crypto
 from ..core.engine import CompositeEngine, EngineSettings
 from ..core.loader import UseCaseRegistry
+from ..core.policies import PartnerPolicyStore
 
 _config = Settings.get_config()
 _logger = logging.getLogger(_config.logging_default_logger_name)
@@ -76,6 +77,14 @@ class CompositeService(BaseService):
             registries, self.crypto, self.http_client, _config.composite_partner_id,
             ttl=_config.catalogue_cache_seconds,
         )
+        self.policies = PartnerPolicyStore(
+            _config.partner_mgmt_api_url, self.http_client,
+            soft_ttl=_config.partner_policy_cache_ttl_seconds,
+            hard_ttl=_config.partner_policy_hard_ttl_seconds,
+            negative_ttl=_config.partner_policy_negative_ttl_seconds,
+            refresh_cooldown=_config.partner_policy_refresh_cooldown_seconds,
+            timeout=_config.partner_policy_fetch_timeout_seconds,
+        )
         self.engine = CompositeEngine(
             EngineSettings(
                 composite_partner_id=_config.composite_partner_id,
@@ -92,6 +101,7 @@ class CompositeService(BaseService):
             self.http_client,
             audit=self.audit,
             activity=self.activity,
+            policies=self.policies,
         )
 
     def http_client(self) -> httpx.AsyncClient:

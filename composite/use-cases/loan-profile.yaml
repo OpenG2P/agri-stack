@@ -18,6 +18,9 @@
 #
 # Template note: keep a space between consecutive braces ("} }", "{ {") so
 # literal JSON never reads as a Jinja "{{ … }}".
+#
+# Who may call it is not set here: a partner's use-case policy in Partner Management
+# grants it (allowed_use_cases: [loan-profile@1]).
 
 use_case: loan-profile
 version: 1.0.0
@@ -33,9 +36,6 @@ policy: credit-assessment
 purpose: credit-assessment
 consent:
   required: true
-
-# Interim stand-in for the PM policy association (PM has no policies yet).
-allowed_partners: [bank-a]
 
 input:
   subject:

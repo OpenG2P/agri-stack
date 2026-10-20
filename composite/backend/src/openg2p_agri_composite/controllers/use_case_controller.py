@@ -70,8 +70,9 @@ class UseCaseController(BaseController):
             description=(
                 "Serve one query for one subject. The body is a signed envelope `{signature, header, message}`: "
                 "`signature` is a detached JWS over `{header, message}` made with the partner's key and "
-                "verified against Partner Management (`header.sender_id`). The Composite checks the partner "
-                "may use the use case and the subject's consent (`message.consent_id`, or `message.consent_jws`), "
+                "verified against Partner Management (`header.sender_id`). The Composite checks that the "
+                "partner's use-case policy in Partner Management grants the use case (`name@major`) and the "
+                "subject's consent (`message.consent_id`, or `message.consent_jws`), "
                 "queries each registry the use case names, and returns one response envelope signed with "
                 "its own key.\n\n"
                 "Each source gets a status: `ok`, `no_record`, `denied`, `unavailable` or `error`. "

@@ -145,7 +145,7 @@
           "Use cases"
         ],
         "summary": "Query a use case",
-        "description": "Serve one query for one subject. The body is a signed envelope `{signature, header, message}`: `signature` is a detached JWS over `{header, message}` made with the partner's key and verified against Partner Management (`header.sender_id`). The Composite checks the partner may use the use case and the subject's consent (`message.consent_id`, or `message.consent_jws`), queries each registry the use case names, and returns one response envelope signed with its own key.\n\nEach source gets a status: `ok`, `no_record`, `denied`, `unavailable` or `error`. A failing optional source leaves its fields null (the response is still 200); a failing mandatory source fails the request (`source_denied`, `source_unavailable`, `source_error`).\n\nEvery answer, errors included, is a signed envelope: on an error `header.status` is `rjct` and `message.error` has the `code` and `message`.",
+        "description": "Serve one query for one subject. The body is a signed envelope `{signature, header, message}`: `signature` is a detached JWS over `{header, message}` made with the partner's key and verified against Partner Management (`header.sender_id`). The Composite checks that the partner's use-case policy in Partner Management grants the use case (`name@major`) and the subject's consent (`message.consent_id`, or `message.consent_jws`), queries each registry the use case names, and returns one response envelope signed with its own key.\n\nEach source gets a status: `ok`, `no_record`, `denied`, `unavailable` or `error`. A failing optional source leaves its fields null (the response is still 200); a failing mandatory source fails the request (`source_denied`, `source_unavailable`, `source_error`).\n\nEvery answer, errors included, is a signed envelope: on an error `header.status` is `rjct` and `message.error` has the `code` and `message`.",
         "operationId": "query_composite_v1_use_cases__use_case__query_post",
         "parameters": [
           {
@@ -417,7 +417,7 @@
             }
           },
           "403": {
-            "description": "Not allowed: `partner_not_allowed`, `consent_required`, `consent_malformed`, `consent_signature_invalid`, `consent_subject_mismatch`, `consent_not_yet_valid`, `consent_expired`, `consent_grant_missing`, `consent_scope_missing`, `consent_denied`, `consent_receipt_missing` (no consent token for a mandatory registry), `source_denied` (a mandatory source was denied).",
+            "description": "Not allowed: `partner_not_allowed` (the partner's use-case policy in Partner Management does not grant this use case, `name@major`, or the partner has none), `consent_required`, `consent_malformed`, `consent_signature_invalid`, `consent_subject_mismatch`, `consent_not_yet_valid`, `consent_expired`, `consent_grant_missing`, `consent_scope_missing`, `consent_denied`, `consent_receipt_missing` (no consent token for a mandatory registry), `source_denied` (a mandatory source was denied).",
             "content": {
               "application/json": {
                 "examples": {
@@ -437,14 +437,14 @@
                           "in_reply_to": "7f1c2a9e-3a51-4c0e-9d5b-0f6f3f2b1c11"
                         },
                         "status_reason_code": "partner_not_allowed",
-                        "status_reason_message": "partner 'bank-b' may not use loan-profile@1"
+                        "status_reason_message": "partner 'bank-b' is not granted the use case loan-profile@1 in Partner Management"
                       },
                       "message": {
                         "use_case": "loan-profile@1",
                         "request_id": "5e0c7b8a-2f41-4d3e-a1b2-c3d4e5f6a7b8",
                         "error": {
                           "code": "partner_not_allowed",
-                          "message": "partner 'bank-b' may not use loan-profile@1"
+                          "message": "partner 'bank-b' is not granted the use case loan-profile@1 in Partner Management"
                         }
                       }
                     }
@@ -611,7 +611,7 @@
             }
           },
           "503": {
-            "description": "`source_unavailable` (a mandatory source is down) or `consent_exchange_unavailable`.",
+            "description": "`source_unavailable` (a mandatory source is down), `consent_exchange_unavailable`, or `partner_policy_unavailable` (Partner Management cannot be read to check the partner's use-case grant and no recent answer is cached).",
             "content": {
               "application/json": {
                 "examples": {
@@ -645,6 +645,34 @@
                         "error": {
                           "code": "source_unavailable",
                           "message": "mandatory source failed: farmer (unavailable)"
+                        }
+                      }
+                    }
+                  },
+                  "partner_policy_unavailable": {
+                    "summary": "partner_policy_unavailable",
+                    "value": {
+                      "signature": "eyJhbGciOiJFUzI1NiIsImtpZCI6ImFncmktY29tcG9zaXRlIn0..<signature>",
+                      "header": {
+                        "version": "1.0.0",
+                        "message_id": "0b6d1d0e-9e55-4d7a-8b3c-1f2e3d4c5b6a",
+                        "message_ts": "2026-10-01T10:00:01.234Z",
+                        "action": "on-query",
+                        "status": "rjct",
+                        "sender_id": "agri-composite",
+                        "receiver_id": "bank-a",
+                        "meta": {
+                          "in_reply_to": "7f1c2a9e-3a51-4c0e-9d5b-0f6f3f2b1c11"
+                        },
+                        "status_reason_code": "partner_policy_unavailable",
+                        "status_reason_message": "Partner Management cannot be read to check the partner's use-case grant; try again later"
+                      },
+                      "message": {
+                        "use_case": "loan-profile@1",
+                        "request_id": "5e0c7b8a-2f41-4d3e-a1b2-c3d4e5f6a7b8",
+                        "error": {
+                          "code": "partner_policy_unavailable",
+                          "message": "Partner Management cannot be read to check the partner's use-case grant; try again later"
                         }
                       }
                     }
@@ -979,7 +1007,7 @@
           "Console (staff)"
         ],
         "summary": "List use cases (console)",
-        "description": "Published use cases with their allowed partners and file name, and the use-case files that failed to load (with the error).\n\nStaff only: needs a console login (IAM session cookie or `Authorization: Bearer`) with the `composite:view` permission. Present only when the console is on (`console_enabled` and a database).",
+        "description": "Published use cases with the partners granted each in Partner Management (`granted_to`: PM partner IDs; null with `granted_to_error` when PM cannot be read) and file name, and the use-case files that failed to load (with the error).\n\nStaff only: needs a console login (IAM session cookie or `Authorization: Bearer`) with the `composite:view` permission. Present only when the console is on (`console_enabled` and a database).",
         "operationId": "list_use_cases_composite_v1_admin_use_cases_get",
         "responses": {
           "200": {
@@ -1015,7 +1043,7 @@
           "Console (staff)"
         ],
         "summary": "Get a use case (console)",
-        "description": "One published use case (`name` or `name@major`) with its response mapping, derived fields and the YAML file text.\n\nStaff only: needs a console login (IAM session cookie or `Authorization: Bearer`) with the `composite:view` permission. Present only when the console is on (`console_enabled` and a database).",
+        "description": "One published use case (`name` or `name@major`) with the partners granted it in Partner Management, its response mapping, derived fields and the YAML file text.\n\nStaff only: needs a console login (IAM session cookie or `Authorization: Bearer`) with the `composite:view` permission. Present only when the console is on (`console_enabled` and a database).",
         "operationId": "get_use_case_composite_v1_admin_use_cases__use_case__get",
         "parameters": [
           {
@@ -1207,7 +1235,7 @@
           "Console (staff)"
         ],
         "summary": "List partners",
-        "description": "Partners named in published use cases, the use cases each may call, and the keys Partner Management serves for each (key ID and algorithm).\n\nStaff only: needs a console login (IAM session cookie or `Authorization: Bearer`) with the `composite:view` permission. Present only when the console is on (`console_enabled` and a database).",
+        "description": "Partners whose use-case policy in Partner Management grants a published use case: the use cases granted, the policy version, and the keys Partner Management serves for each (key ID and algorithm). `pm_error` is set when Partner Management cannot be read.\n\nStaff only: needs a console login (IAM session cookie or `Authorization: Bearer`) with the `composite:view` permission. Present only when the console is on (`console_enabled` and a database).",
         "operationId": "list_partners_composite_v1_admin_partners_get",
         "responses": {
           "200": {
@@ -1243,7 +1271,7 @@
           "Console (staff)"
         ],
         "summary": "List calls",
-        "description": "The call log, newest first: use case, partner, HTTP status, outcome, reason, duration and per-source statuses. No request or response data is stored. `total` stops at 10000 (`total_capped` is then true).\n\nStaff only: needs a console login (IAM session cookie or `Authorization: Bearer`) with the `composite:view` permission. Present only when the console is on (`console_enabled` and a database).",
+        "description": "The call log, newest first: use case, partner, HTTP status, outcome, reason, duration and per-source statuses. No request or response data is stored. `total` stops at 10000 (`total_capped` is then true). `partners`: the partner IDs in the log (for filtering).\n\nStaff only: needs a console login (IAM session cookie or `Authorization: Bearer`) with the `composite:view` permission. Present only when the console is on (`console_enabled` and a database).",
         "operationId": "list_activity_composite_v1_admin_activity_get",
         "parameters": [
           {

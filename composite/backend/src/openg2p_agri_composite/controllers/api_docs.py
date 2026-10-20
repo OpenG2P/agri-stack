@@ -366,12 +366,15 @@ QUERY_RESPONSES: Dict[int | str, Dict[str, Any]] = {
             "signature_invalid", "the request signature does not verify against the sender's Partner Management key")},
     ),
     403: _error_response(
-        "Not allowed: `partner_not_allowed`, `consent_required`, `consent_malformed`, `consent_signature_invalid`, "
-        "`consent_subject_mismatch`, `consent_not_yet_valid`, `consent_expired`, `consent_grant_missing`, "
+        "Not allowed: `partner_not_allowed` (the partner's use-case policy in Partner Management does not grant "
+        "this use case, `name@major`, or the partner has none), `consent_required`, `consent_malformed`, "
+        "`consent_signature_invalid`, `consent_subject_mismatch`, `consent_not_yet_valid`, `consent_expired`, `consent_grant_missing`, "
         "`consent_scope_missing`, `consent_denied`, `consent_receipt_missing` (no consent token for a mandatory "
         "registry), `source_denied` (a mandatory source was denied).",
         {
-            "partner_not_allowed": error_example("partner_not_allowed", "partner 'bank-b' may not use loan-profile@1"),
+            "partner_not_allowed": error_example(
+                "partner_not_allowed",
+                "partner 'bank-b' is not granted the use case loan-profile@1 in Partner Management"),
             "consent_denied": error_example(
                 "consent_denied", "the exchange Consent Manager denied the consent (consent_expired)"),
         },
@@ -397,10 +400,17 @@ QUERY_RESPONSES: Dict[int | str, Dict[str, Any]] = {
             {"farmer": {"status": "error", "detail": "registry rejected the request (HTTP 400)"}})},
     ),
     503: _error_response(
-        "`source_unavailable` (a mandatory source is down) or `consent_exchange_unavailable`.",
-        {"source_unavailable": error_example(
-            "source_unavailable", "mandatory source failed: farmer (unavailable)",
-            {"farmer": {"status": "unavailable", "detail": "registry unavailable (HTTP 503)"}})},
+        "`source_unavailable` (a mandatory source is down), `consent_exchange_unavailable`, or "
+        "`partner_policy_unavailable` (Partner Management cannot be read to check the partner's use-case grant "
+        "and no recent answer is cached).",
+        {
+            "source_unavailable": error_example(
+                "source_unavailable", "mandatory source failed: farmer (unavailable)",
+                {"farmer": {"status": "unavailable", "detail": "registry unavailable (HTTP 503)"}}),
+            "partner_policy_unavailable": error_example(
+                "partner_policy_unavailable",
+                "Partner Management cannot be read to check the partner's use-case grant; try again later"),
+        },
     ),
     504: _error_response(
         "`source_unavailable`: a mandatory source timed out (or the use case's overall timeout was reached).",

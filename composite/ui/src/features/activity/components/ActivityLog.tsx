@@ -8,11 +8,9 @@ import QueryView from "@/components/QueryView";
 import TableSkeleton from "@/components/TableSkeleton";
 import { EmptyState, PageHeader, StatusBadge, tdClass, thClass } from "@/components/ui";
 import { Link } from "@/i18n/navigation";
-import { ANY_PARTNER } from "@/features/partners/api";
-import { usePartners } from "@/features/partners/hooks";
 import { toUseCaseHref } from "@/features/use-cases/api";
 import { useUseCases } from "@/features/use-cases/hooks";
-import { formatDateTime } from "@/shared/utils/format";
+import { formatDateTime, unique } from "@/shared/utils/format";
 import { useActivity } from "../hooks";
 import { OUTCOMES, type ActivityFilters, type ActivityItem, type ActivityPage } from "../types";
 
@@ -118,7 +116,8 @@ export default function ActivityLog() {
 
     const query = useActivity(filters, pageSize, (page - 1) * pageSize);
     const useCaseRefs = useUseCases().data?.use_cases.map((u) => u.use_case) ?? [];
-    const partnerIds = usePartners().data?.partners.map((p) => p.partner_id).filter((id) => id !== ANY_PARTNER) ?? [];
+    // Senders in the call log (what it can be filtered on); the selected one stays listed while a page loads.
+    const partnerIds = unique([...(query.data?.partners ?? []), filters.partner].filter(Boolean)).sort();
 
     const setFilter = (key: keyof ActivityFilters, value: string) => {
         setFilters((prev) => ({ ...prev, [key]: value }));

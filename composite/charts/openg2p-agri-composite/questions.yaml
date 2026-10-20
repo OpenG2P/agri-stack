@@ -37,7 +37,7 @@ questions:
   label: Composite Partner ID
   group: Integration
 - variable: global.partnerManagementApiUrl
-  description: Partner Management partner-api URL (partner public keys)
+  description: Partner Management partner-api URL (partner public keys, and the partner policies that grant use cases)
   type: string
   default: http://commons-services-pm-partner-api
   label: Partner Management URL
@@ -63,7 +63,7 @@ questions:
 
 # ------------------------ Agri Stack exchange ------------------------
 - variable: composite.consent.mode
-  description: "exchange (default): the partner's consent is checked at the exchange Consent Manager, and each registry gets its own consent token (Agri Stack exchange install). passthrough: the partner's consent goes to each registry unchanged, so each registry's Consent Manager needs a binding for every partner."
+  description: "exchange (default): the partner's consent is checked at the exchange Consent Manager, and each registry gets its own consent token (Agri Stack exchange install). passthrough: the partner's consent goes to each registry unchanged, so each registry's Partner Management needs a scope policy for every partner."
   type: enum
   options:
     - exchange

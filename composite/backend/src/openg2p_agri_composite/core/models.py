@@ -236,9 +236,8 @@ class UseCase(_Strict):
     policy: Optional[str] = None
     purpose: Optional[str] = None
     consent: ConsentSpec = ConsentSpec()
-    # Interim stand-in for the PM policy association (PM has no policies yet):
-    # partner IDs allowed to call this use case. "*" = any verified partner.
-    allowed_partners: List[str] = []
+    # Which partners may call the use case is not here: each partner's use-case
+    # policy in Partner Management grants it (``name@major``).
 
     input: InputSpec
     sources: List[SourceSpec] = Field(..., min_length=1)

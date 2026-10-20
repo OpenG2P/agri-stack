@@ -7,7 +7,9 @@ partner's consent unchanged, and returns one signed response with a status per r
 registry still checks the consent with the Consent Manager; nothing is stored by the composite.
 
 Before installing, create the composite's signing key Secret and onboard the composite (and each
-partner) in Partner Management — see the composite README in the agri-stack repository.
+partner) in Partner Management — see the composite README in the agri-stack repository. A partner
+calls a use case only when its use-case policy in Partner Management grants it (`name@major`, e.g.
+`loan-profile@1`).
 
 **Use cases** are YAML configuration, not code. They are not in this form: edit `composite.useCases`
 in the **Edit YAML** view of the values (one entry per use case), or point

@@ -11,6 +11,7 @@ import { toUseCaseHref } from "../api";
 import { useUseCases } from "../hooks";
 import type { UseCase, UseCaseLoadError } from "../types";
 import { registriesOf } from "../utils";
+import GrantedTo from "./GrantedTo";
 
 function LoadErrors({ errors }: { errors: UseCaseLoadError[] }) {
     const t = useTranslations();
@@ -57,8 +58,8 @@ export default function UseCaseList() {
         },
         {
             key: "partners",
-            header: t("col_allowed_partners"),
-            render: (u) => <ChipList items={u.allowed_partners} mono empty={t("none")} />,
+            header: t("col_granted_to"),
+            render: (u) => <GrantedTo useCase={u} />,
         },
     ];
 
@@ -74,7 +75,7 @@ export default function UseCaseList() {
                             rows={data.use_cases}
                             rowKey={(u) => u.use_case}
                             searchText={(u) =>
-                                [u.use_case, u.title, u.purpose, ...registriesOf(u), ...u.allowed_partners].join(" ")
+                                [u.use_case, u.title, u.purpose, ...registriesOf(u), ...(u.granted_to ?? [])].join(" ")
                             }
                             emptyMessage={t("no_use_cases")}
                         />

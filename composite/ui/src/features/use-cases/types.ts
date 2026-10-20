@@ -42,7 +42,10 @@ export interface UseCase {
     output_fields: string[];
     partial_response: string;
     rate_per_partner: string | null;
-    allowed_partners: string[];
+    /** Partner Management partner IDs whose use-case policy grants this use case; null when PM could not be read. */
+    granted_to: string[] | null;
+    /** Why `granted_to` is null (Partner Management could not be read). */
+    granted_to_error: string | null;
     file: string;
 }
 

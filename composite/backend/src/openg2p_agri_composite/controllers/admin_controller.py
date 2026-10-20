@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import Query
 from fastapi.responses import JSONResponse
@@ -10,6 +10,7 @@ from openg2p_fastapi_common.controller import BaseController
 from ..config import Settings
 from ..core.activity import OUTCOMES
 from ..core.catalogue import catalogue_url
+from ..core.policies import PolicyUnavailable
 from ..services.composite_service import CompositeService
 from .api_docs import CONSOLE_RESPONSES, ROUTER_RESPONSES, ApiError
 
@@ -34,16 +35,12 @@ def _not_found(code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=404, content={"error": {"code": code, "message": message}})
 
 
-def _pm_reference(partner_id: str) -> str:
-    return f"PARTNER_{partner_id.replace('-', '_').upper()}"
-
-
 class AdminController(BaseController):
     """The console's read-only API (staff, IAM session with ``composite:view``).
 
     Configuration as loaded (use cases, registries, settings), each registry's
-    data scope catalogue, the partners named by use cases with their keys in
-    Partner Management, and the call log.
+    data scope catalogue, the partners Partner Management grants use cases to
+    (their use-case policies) with their keys, and the call log.
     """
 
     def __init__(self, **kwargs):
@@ -58,11 +55,12 @@ class AdminController(BaseController):
              "The Composite's settings (partner ID, consent mode, Partner Management URL, signing key ID), "
              "counts of use cases, registries and partners, and the last 24 hours of calls.", {}),
             ("/use-cases", self.list_use_cases, "List use cases (console)",
-             "Published use cases with their allowed partners and file name, and the use-case files that "
-             "failed to load (with the error).", {}),
+             "Published use cases with the partners granted each in Partner Management (`granted_to`: PM "
+             "partner IDs; null with `granted_to_error` when PM cannot be read) and file name, and the "
+             "use-case files that failed to load (with the error).", {}),
             ("/use-cases/{use_case}", self.get_use_case, "Get a use case (console)",
-             "One published use case (`name` or `name@major`) with its response mapping, derived fields "
-             "and the YAML file text.", _NOT_FOUND_OR_INVALID),
+             "One published use case (`name` or `name@major`) with the partners granted it in Partner "
+             "Management, its response mapping, derived fields and the YAML file text.", _NOT_FOUND_OR_INVALID),
             ("/registries", self.list_registries, "List registries",
              "The configured registries: search and catalogue URLs, Partner Management partner ID, whether "
              "the catalogue answered, the number of data scopes, and the use cases that query each.", {}),
@@ -70,12 +68,13 @@ class AdminController(BaseController):
              "The registry's data scope catalogue (each scope's current version and fields) and the use-case "
              "sources that ask for each scope. Cached; `refresh=true` fetches it again.", _NOT_FOUND),
             ("/partners", self.list_partners, "List partners",
-             "Partners named in published use cases, the use cases each may call, and the keys "
-             "Partner Management serves for each (key ID and algorithm).", {}),
+             "Partners whose use-case policy in Partner Management grants a published use case: the "
+             "use cases granted, the policy version, and the keys Partner Management serves for each (key "
+             "ID and algorithm). `pm_error` is set when Partner Management cannot be read.", {}),
             ("/activity", self.list_activity, "List calls",
              "The call log, newest first: use case, partner, HTTP status, outcome, reason, duration and "
              "per-source statuses. No request or response data is stored. `total` stops at 10000 "
-             "(`total_capped` is then true).", _INVALID_OUTCOME),
+             "(`total_capped` is then true). `partners`: the partner IDs in the log (for filtering).", _INVALID_OUTCOME),
         ):
             self.router.add_api_route(
                 path, handler, methods=["GET"], summary=summary,
@@ -88,15 +87,42 @@ class AdminController(BaseController):
     def _links(self) -> Dict[str, Optional[str]]:
         return {"pm_portal": _config.console_pm_portal_url or None, "cm_portal": _config.console_cm_portal_url or None}
 
-    def _use_case_entry(self, compiled) -> Dict[str, Any]:
-        return {**compiled.describe(), "allowed_partners": list(compiled.spec.allowed_partners),
+    async def _grants(self, published) -> Tuple[Dict[str, List[Dict[str, Any]]], Optional[str]]:
+        """({use case ref: PM use-case policies granting it}, error): from Partner Management,
+        ``GET /policies?use_case=`` per published use case. A use case PM could not be asked about
+        is left out, and the error says why."""
+        results = await asyncio.gather(
+            *(self.service.policies.list_for_use_case(c.ref) for c in published), return_exceptions=True)
+        grants: Dict[str, List[Dict[str, Any]]] = {}
+        error = None
+        for compiled, result in zip(published, results):
+            if isinstance(result, PolicyUnavailable):
+                error = str(result)
+            elif isinstance(result, BaseException):
+                raise result
+            else:
+                grants[compiled.ref] = result
+        return grants, error
+
+    @staticmethod
+    def _granted_to(policies: Optional[List[Dict[str, Any]]]) -> Optional[List[str]]:
+        return None if policies is None else sorted({str(p["partner_id"]) for p in policies})
+
+    def _use_case_entry(self, compiled, grants, error) -> Dict[str, Any]:
+        policies = grants.get(compiled.ref)
+        return {**compiled.describe(), "granted_to": self._granted_to(policies),
+                "granted_to_error": error if policies is None else None,
                 "file": os.path.basename(compiled.path)}
 
-    def _partners(self) -> Dict[str, List[str]]:
-        out: Dict[str, List[str]] = {}
-        for compiled in self.service.registry.published():
-            for partner in compiled.spec.allowed_partners:
-                out.setdefault(partner, []).append(compiled.ref)
+    @staticmethod
+    def _partners(grants: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
+        """{PM partner ID: {"use_cases": [...], "policy_version": n}} from the use-case grants."""
+        out: Dict[str, Dict[str, Any]] = {}
+        for ref, policies in grants.items():
+            for p in policies:
+                entry = out.setdefault(str(p["partner_id"]), {"use_cases": [], "policy_version": p.get("version")})
+                if ref not in entry["use_cases"]:
+                    entry["use_cases"].append(ref)
         return dict(sorted(out.items()))
 
     def _used_by(self) -> Dict[str, List[str]]:
@@ -113,6 +139,7 @@ class AdminController(BaseController):
         """Settings, counts and the last day's calls."""
         activity = self.service.activity
         engine = self.service.engine.settings
+        grants, error = await self._grants(self.service.registry.published())
         return {
             "composite_partner_id": engine.composite_partner_id,
             "consent_mode": engine.consent_mode,
@@ -124,16 +151,19 @@ class AdminController(BaseController):
             "use_cases": {"published": len(self.service.registry.published()),
                           "errors": len(self.service.registry.errors())},
             "registries": len(engine.registries),
-            "partners": len(self._partners()),
+            # Partners granted a published use case in Partner Management; null when PM cannot be read.
+            "partners": None if error else len(self._partners(grants)),
             "activity_24h": await activity.summary(24) if activity.enabled else None,
             "links": self._links(),
         }
 
     @require_permissions(VIEW)
     async def list_use_cases(self):
-        """Published use cases, with their allowed partners, and the files that failed to load."""
+        """Published use cases, with the partners granted each in PM, and the files that failed to load."""
+        published = self.service.registry.published()
+        grants, error = await self._grants(published)
         return {
-            "use_cases": [self._use_case_entry(c) for c in self.service.registry.published()],
+            "use_cases": [self._use_case_entry(c, grants, error) for c in published],
             "errors": [{"file": f, "error": e} for f, e in sorted(self.service.registry.errors().items())],
         }
 
@@ -151,7 +181,8 @@ class AdminController(BaseController):
                 text = fh.read()
         except OSError:
             text = None
-        return {**self._use_case_entry(compiled), "mapping": dict(compiled.spec.response.mapping),
+        grants, error = await self._grants([compiled])
+        return {**self._use_case_entry(compiled, grants, error), "mapping": dict(compiled.spec.response.mapping),
                 "derived": dict(compiled.spec.response.derived), "source_yaml": text}
 
     @require_permissions(VIEW)
@@ -204,20 +235,15 @@ class AdminController(BaseController):
 
     @require_permissions(VIEW)
     async def list_partners(self):
-        """Partners named in published use cases, with the keys Partner Management serves for them."""
-        partners = self._partners()
-        keys = await asyncio.gather(*(self.service.partner_keys(_pm_reference(p)) for p in partners if p != "*"))
-        key_by_partner = dict(zip([p for p in partners if p != "*"], keys))
+        """Partners granted published use cases in PM (use-case policies), with the keys PM serves for them."""
+        grants, error = await self._grants(self.service.registry.published())
+        partners = self._partners(grants)
+        keys = await asyncio.gather(*(self.service.partner_keys(p) for p in partners))
         out = []
-        for partner, use_cases in partners.items():
-            if partner == "*":
-                out.append({"partner_id": "*", "pm_reference": None, "use_cases": use_cases,
-                            "pm_keys": None, "pm_error": "any partner onboarded in Partner Management"})
-                continue
-            served, error = key_by_partner[partner]
-            out.append({"partner_id": partner, "pm_reference": _pm_reference(partner), "use_cases": use_cases,
-                        "pm_keys": served, "pm_error": error})
-        return {"partners": out, "links": self._links()}
+        for (partner, entry), (served, key_error) in zip(partners.items(), keys):
+            out.append({"partner_id": partner, "use_cases": entry["use_cases"],
+                        "policy_version": entry["policy_version"], "pm_keys": served, "pm_error": key_error})
+        return {"partners": out, "pm_error": error, "links": self._links()}
 
     @require_permissions(VIEW)
     async def list_activity(
@@ -231,11 +257,12 @@ class AdminController(BaseController):
         """The call log, newest first."""
         activity = self.service.activity
         if not activity.enabled:
-            return {"recording": False, "total": 0, "total_capped": False, "items": []}
+            return {"recording": False, "total": 0, "total_capped": False, "items": [], "partners": []}
         if outcome and outcome not in OUTCOMES:
             return JSONResponse(status_code=400, content={"error": {
                 "code": "invalid_outcome", "message": f"outcome must be one of {list(OUTCOMES)}"}})
         total, capped, items = await activity.query(limit=limit, offset=offset, partner=partner,
                                                     use_case=use_case, outcome=outcome)
         # total stops at 10000 (total_capped true): counting a large log on every page load is slow.
-        return {"recording": True, "total": total, "total_capped": capped, "items": items}
+        return {"recording": True, "total": total, "total_capped": capped, "items": items,
+                "partners": await activity.partners()}

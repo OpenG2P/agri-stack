@@ -24,9 +24,10 @@
 # NOT removed (deliberately):
 #   - the console's Keycloak client (staff realm): harmless, and a reinstall
 #     updates it in place (as the registry uninstall leaves its clients);
-#   - the composite's partner and key in Partner Management, and Consent Manager
-#     bindings/policies (test fixtures, reused by a reinstall; remove them there);
-#   - the department registries' PM/CM entries for the composite.
+#   - the composite's partner, key and policies in Partner Management, and the
+#     partners' use-case policies there (test fixtures, reused by a reinstall;
+#     remove them there);
+#   - the department PMs' entries (key, scope policies) for the composite.
 #
 # Refuses to start while a Helm operation on the release is still running
 # (status pending-install / pending-upgrade / pending-rollback, or a Rancher
@@ -255,7 +256,7 @@ echo "  - Jobs/Pods/ConfigMaps/Secrets labelled app.kubernetes.io/instance=$RELE
 [[ "$DROP_SIGNING_SECRET" == true ]] && echo "  - Signing Secret:   $SIGNING_SECRET (--drop-signing-secret)"
 echo "Will PRESERVE:"
 echo "  - Keycloak client '$CONSOLE_MNEMONIC' (staff realm; a reinstall updates it)"
-echo "  - Partner Management partner/key and Consent Manager bindings (managed in those services)"
+echo "  - Partner Management partners, keys and policies (managed there)"
 [[ "$KEEP_DB" == true ]]  && echo "  - Console database $CONSOLE_DB (--keep-db)"
 [[ "$KEEP_IAM" == true ]] && echo "  - IAM rows for '$CONSOLE_MNEMONIC' (--keep-iam)"
 [[ "$DROP_SIGNING_SECRET" == false ]] && echo "  - Signing Secret '$SIGNING_SECRET' (use --drop-signing-secret to remove)"

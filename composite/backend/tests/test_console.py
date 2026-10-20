@@ -135,11 +135,9 @@ async def test_authenticated_queries_are_recorded_unsigned_ones_are_not(h, store
     assert set(row["sources"]) == {"farmer", "season_summaries", "crop_seasons"}
 
 
-async def test_failures_after_authentication_are_recorded(h, store, use_cases_dir):
-    from test_engine import set_use_case
-
+async def test_failures_after_authentication_are_recorded(h, store):
     h.engine.activity = store
-    set_use_case(h, use_cases_dir, allowed_partners=["someone-else"])
+    h.pm.policies.clear()  # bank-a has no use-case policy in PM
     status, _ = await h.query(h.envelope())
     assert status == 403
     await store.drain()
@@ -186,7 +184,7 @@ async def admin(h, store, monkeypatch):
     service = types.SimpleNamespace(
         registry=h.registry, engine=h.engine, audit=h.engine.audit, activity=store,
         catalogue=ScopeCatalogue(REGISTRIES, h.crypto, lambda: client, "agri-composite"),
-        signing_kid=signing_kid, partner_keys=partner_keys,
+        signing_kid=signing_kid, partner_keys=partner_keys, policies=h.policies,
     )
     monkeypatch.setattr(ac.CompositeService, "get_component", classmethod(lambda cls, *a, **k: service))
     return ac.AdminController()
@@ -211,11 +209,22 @@ async def test_admin_overview_and_use_cases(admin, h, store):
 
     lst = await admin.list_use_cases()
     uc = lst["use_cases"][0]
-    assert uc["use_case"] == "loan-profile@1" and uc["allowed_partners"] == ["bank-a"]
+    assert uc["use_case"] == "loan-profile@1" and uc["granted_to"] == ["PARTNER_BANK_A"]
+    assert uc["granted_to_error"] is None
     assert uc["file"] == "loan-profile.yaml" and "farmer-registry" in uc["consent_scopes"]
     one = await admin.get_use_case("loan-profile")
     assert "use_case: loan-profile" in one["source_yaml"] and "farmer.name" in one["mapping"]
+    assert one["granted_to"] == ["PARTNER_BANK_A"]
     assert (await admin.get_use_case("nope")).status_code == 404
+
+
+async def test_admin_use_cases_when_pm_is_down(admin, h):
+    h.pm.down = True
+    uc = (await admin.list_use_cases())["use_cases"][0]
+    assert uc["granted_to"] is None and "Partner Management" in uc["granted_to_error"]
+    assert (await admin.overview())["partners"] is None
+    lst = await admin.list_partners()
+    assert lst["partners"] == [] and "Partner Management" in lst["pm_error"]
 
 
 async def test_admin_registries_and_scopes(admin):
@@ -234,17 +243,23 @@ async def test_admin_registries_and_scopes(admin):
 
 
 async def test_admin_partners_and_activity(admin, h, store):
-    partners = (await admin.list_partners())["partners"]
-    assert partners == [{"partner_id": "bank-a", "pm_reference": "PARTNER_BANK_A", "use_cases": ["loan-profile@1"],
-                         "pm_keys": [{"kid": "k1", "algorithm": "ES256"}], "pm_error": None}]
+    from conftest import use_case_policy
+
+    # Partners come from PM use-case policies (a partner granted only other use cases is not listed).
+    h.pm.policies["PARTNER_BANK_C"] = [use_case_policy("PARTNER_BANK_C", use_cases=["other@1"])]
+    lst = await admin.list_partners()
+    assert lst["pm_error"] is None
+    assert lst["partners"] == [{"partner_id": "PARTNER_BANK_A", "use_cases": ["loan-profile@1"], "policy_version": 1,
+                                "pm_keys": [{"kid": "k1", "algorithm": "ES256"}], "pm_error": None}]
     await h.query(h.envelope())
     await store.drain()
     act = await admin.list_activity(limit=50, offset=0, partner="bank-a", use_case=None, outcome=None)
     assert act["recording"] is True and act["total"] == 1
+    assert act["partners"] == ["bank-a"]  # the filter's choices: senders in the call log
     assert (await admin.list_activity(limit=50, offset=0, partner=None, use_case=None, outcome="bad")).status_code == 400
     admin.service.activity = ActivityStore()
     assert await admin.list_activity(limit=50, offset=0, partner=None, use_case=None, outcome=None) == \
-        {"recording": False, "total": 0, "total_capped": False, "items": []}
+        {"recording": False, "total": 0, "total_capped": False, "items": [], "partners": []}
 
 
 def test_registry_urls_used_in_tests():

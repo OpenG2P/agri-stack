@@ -90,17 +90,28 @@ def test_composite_p12_round_trip():
     assert "agri-composite" in cert.subject.rfc4514_string()
 
 
-def test_payloads():
-    assert kit.binding_payload("test-bank", "farmer-registry")["partner_mgmt_id"] == "PARTNER_TEST_BANK"
-    pol = kit.policy_payload("crop-sown-registry", "credit-assessment")
-    assert pol["allowed_data_scopes"] == ["crop-sown-registry.farmer_reference", "crop-sown-registry.crop_season",
-                                          "crop-sown-registry.measures", "crop-sown-registry.location"]
+def test_payloads(partner_key):
+    pol = kit.scope_policy_payload("crop-sown-registry", ["credit-assessment"])
+    assert pol["data_controller"] == "crop-sown-registry" and pol["allowed_use_cases"] == []
+    assert pol["allowed_data_scopes"] == sorted(["crop-sown-registry.farmer_reference", "crop-sown-registry.crop_season",
+                                                 "crop-sown-registry.measures", "crop-sown-registry.location"])
     # Scope IDs are namespaced by the registry they belong to.
     assert all(s.startswith(f"{c}.") for c, scopes in kit.GRANTS.items() for s in scopes)
     # The crop sources query the Crop Sown Registry by the farmer ID read from the
     # farmer record: the Farmer Registry grant must carry it.
     assert "farmer-registry.farmer_identifiers" in kit.GRANTS["farmer-registry"]
     assert "FAYDA_FAN" in pol["allowed_subject_id_types"] and pol["allowed_signing_algs"] == ["ES256"]
+    # A use-case policy: no data controller, no scopes, the use cases (name@major).
+    uc = kit.use_case_policy_payload(["loan-profile@1"], ["credit-assessment"])
+    assert uc["data_controller"] is None and uc["allowed_data_scopes"] == []
+    assert uc["allowed_use_cases"] == ["loan-profile@1"] and uc["allowed_purposes"] == ["credit-assessment"]
+    # The onboarding request carries policies only when given; the policy request names the PM partner.
+    assert "policies" not in kit.onboarding_payload("test-bank", "T", partner_key, "k1")
+    onboard = kit.onboarding_payload("test-bank", "T", partner_key, "k1", [uc])
+    assert onboard["partner_id"] == "PARTNER_TEST_BANK" and onboard["policies"] == [uc]
+    req = kit.policy_request_payload("test-bank", [pol])
+    assert req["partner_id"] == "PARTNER_TEST_BANK" and req["policies"] == [pol]
+    assert kit.policy_request_payload("PARTNER_AGRI_COMPOSITE", [pol])["partner_id"] == "PARTNER_AGRI_COMPOSITE"
 
 
 # ── PM plan ──────────────────────────────────────────────────────────────────
@@ -194,73 +205,71 @@ def test_secret_manifest_holds_values_only_as_base64():
     assert set(m["data"]) == {"composite.p12", "password", "kid", "algorithm"}
 
 
-# ── CM plan ──────────────────────────────────────────────────────────────────
+# ── PM policy plan ───────────────────────────────────────────────────────────
 
-NEEDED = {c: kit.policy_payload(c) for c in kit.GRANTS}
-
-
-def test_cm_nothing_bound_creates_both_bindings_and_policies():
-    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed=NEEDED, bindings=[], policies={})
-    assert [(a["op"], a["controller"]) for a in p["actions"]] == [
-        ("create_binding", "farmer-registry"), ("put_policy", "farmer-registry"),
-        ("create_binding", "crop-sown-registry"), ("put_policy", "crop-sown-registry")]
-    assert not p["conflicts"]
-
-
-def _binding(controller, status="active", pm="PARTNER_TEST_BANK"):
-    return {"id": f"b-{controller}", "audience": "test-bank", "controller_id": controller, "status": status,
-            "partner_mgmt_id": pm}
+NEEDED = {c: kit.scope_policy_payload(c) for c in kit.GRANTS}
+USE_CASE = kit.use_case_policy_payload(["loan-profile@1"])
 
 
 def _policy(controller, **kw):
-    pol = dict(kit.policy_payload(controller), status="active", version=1)
+    pol = dict(NEEDED[controller] if controller else USE_CASE, status="active", version=1)
     pol.update(kw)
     return pol
 
 
-def test_cm_everything_in_place_is_ok():
-    bindings = [_binding(c) for c in kit.GRANTS]
-    policies = {f"b-{c}": [_policy(c)] for c in kit.GRANTS}
-    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed=NEEDED, bindings=bindings,
-                    policies=policies)
-    assert p["actions"] == [] and p["conflicts"] == [] and sorted(p["ok"]) == sorted(kit.GRANTS)
+def _plan(needed, active=(), pending=()):
+    return kit.plan_pm_policies(needed=list(needed), active=list(active), pending=list(pending))
 
 
-def test_cm_narrow_policy_is_widened_without_dropping_existing_scopes():
-    bindings = [_binding(c) for c in kit.GRANTS]
-    policies = {f"b-{c}": [_policy(c)] for c in kit.GRANTS}
-    policies["b-farmer-registry"] = [_policy("farmer-registry", allowed_data_scopes=["farmer-registry.personal_details", "x"])]
-    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed=NEEDED, bindings=bindings,
-                    policies=policies)
-    (act,) = p["actions"]
-    assert act["op"] == "put_policy" and act["binding_id"] == "b-farmer-registry"
-    assert set(act["body"]["allowed_data_scopes"]) == set(kit.GRANTS["farmer-registry"]) | {"x"}
+def test_policies_none_active_are_requested():
+    p = _plan(NEEDED.values())
+    assert [x["data_controller"] for x in p["request"]] == list(kit.GRANTS)
+    assert p["approve"] == [] and p["conflicts"] == [] and p["ok"] == []
 
 
-def test_cm_wrong_purpose_needs_a_new_policy():
-    bindings = [_binding("farmer-registry")]
-    policies = {"b-farmer-registry": [_policy("farmer-registry", allowed_purposes=["other"])]}
-    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed={"farmer-registry": NEEDED["farmer-registry"]},
-                    bindings=bindings, policies=policies)
-    assert p["actions"][0]["op"] == "put_policy"
-    assert set(p["actions"][0]["body"]["allowed_purposes"]) == {"other", "credit-assessment"}
+def test_policies_in_place_are_ok():
+    p = _plan(NEEDED.values(), active=[_policy(c) for c in kit.GRANTS])
+    assert p["request"] == [] and sorted(p["ok"]) == sorted(kit.GRANTS)
 
 
-def test_cm_suspended_binding_is_activated():
-    bindings = [_binding("farmer-registry", status="suspended")]
-    policies = {"b-farmer-registry": [_policy("farmer-registry")]}
-    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed={"farmer-registry": NEEDED["farmer-registry"]},
-                    bindings=bindings, policies=policies)
-    assert [a["op"] for a in p["actions"]] == ["activate_binding"]
+def test_narrow_scope_policy_is_widened_without_dropping_existing_scopes():
+    active = [_policy(c) for c in kit.GRANTS]
+    active[0] = _policy("farmer-registry", allowed_data_scopes=["farmer-registry.personal_details", "x"])
+    (req,) = _plan(NEEDED.values(), active=active)["request"]
+    assert req["data_controller"] == "farmer-registry"
+    assert set(req["allowed_data_scopes"]) == set(kit.GRANTS["farmer-registry"]) | {"x"}
 
 
-def test_cm_pending_policy_and_foreign_pm_id_are_conflicts():
-    bindings = [_binding("farmer-registry"), _binding("crop-sown-registry", pm="PARTNER_SOMEONE")]
-    policies = {"b-farmer-registry": [{"status": "pending", "version": 1, "awe_request_id": "awe-1"}]}
-    p = kit.plan_cm(audience="test-bank", pm_ref="PARTNER_TEST_BANK", needed=NEEDED, bindings=bindings,
-                    policies=policies)
-    assert p["actions"] == []
-    assert any("awe-1" in c for c in p["conflicts"]) and any("PARTNER_SOMEONE" in c for c in p["conflicts"])
+def test_wrong_purpose_needs_a_wider_policy():
+    p = _plan([NEEDED["farmer-registry"]], active=[_policy("farmer-registry", allowed_purposes=["other"])])
+    assert set(p["request"][0]["allowed_purposes"]) == {"other", "credit-assessment"}
+
+
+def test_a_scope_policy_does_not_count_as_the_use_case_policy():
+    # Policies are per data controller: the use-case policy (null) is separate from scope policies.
+    p = _plan([USE_CASE], active=[_policy("farmer-registry", allowed_use_cases=["loan-profile@1"])])
+    assert p["request"] == [USE_CASE]
+
+
+def test_use_case_policy_is_widened_with_other_use_cases_kept():
+    p = _plan([USE_CASE], active=[_policy(None, allowed_use_cases=["insurance@1"])])
+    assert p["request"][0]["allowed_use_cases"] == ["insurance@1", "loan-profile@1"]
+    assert p["request"][0]["data_controller"] is None
+    assert _plan([USE_CASE], active=[_policy(None, allowed_use_cases=["insurance@1", "loan-profile@1"])])["ok"] == [None]
+
+
+def test_open_request_that_covers_is_approved_not_resubmitted():
+    pending = [{"id": "r1", "request_type": "policy", "proposed_policies": [NEEDED["farmer-registry"]]}]
+    p = _plan([NEEDED["farmer-registry"]], pending=pending)
+    assert p["approve"] == ["r1"] and p["request"] == []
+
+
+def test_open_request_that_does_not_cover_is_a_conflict():
+    narrow = dict(NEEDED["farmer-registry"], allowed_data_scopes=["farmer-registry.land"])
+    pending = [{"id": "r2", "request_type": "onboarding", "proposed_policies": [narrow]}]
+    p = _plan([NEEDED["farmer-registry"]], pending=pending)
+    assert p["request"] == [] and p["approve"] == []
+    assert len(p["conflicts"]) == 1 and "r2" in p["conflicts"][0]
 
 
 def test_policy_validity_cap():
@@ -275,12 +284,6 @@ def test_policy_validity_cap():
 
 
 # ── setup_exchange ───────────────────────────────────────────────────────────
-
-
-
-
-
-
 
 
 def test_query_envelope_with_a_stored_consent_id():
@@ -342,6 +345,9 @@ def test_needed_policies_from_published_use_cases():
          "consent_scopes": {"farmer-registry": {"required": ["farmer-registry.personal_details"], "optional": []}}},
     ]
     out = setup.needed_policies(use_cases, ["farmer-registry", "crop-sown-registry", "other-registry"])
+    # The composite's ceiling: a PM scope policy per registry.
+    assert out["farmer-registry"]["data_controller"] == "farmer-registry"
+    assert out["farmer-registry"]["allowed_use_cases"] == []
     assert out["farmer-registry"]["allowed_data_scopes"] == [
         "farmer-registry.land", "farmer-registry.main_crops", "farmer-registry.personal_details"]
     assert out["farmer-registry"]["allowed_purposes"] == ["credit-assessment", "insurance"]
@@ -368,3 +374,90 @@ def test_receipt_trust_gap():
         dept_trusted=[{"issuer": "https://cm.agrix", "presenter": "someone"}], **kw)
     assert "does not issue consent tokens" in setup.receipt_trust_gap(
         dept_trusted=[], **{**kw, "presenters": []})
+
+
+# ── partner_test: onboarding and the use-case grant in PM (stubbed PM) ───────
+
+class FakePm:
+    """PM staff and partner APIs, enough for partner_test's steps 3 and 4."""
+
+    def __init__(self, partner=None, policies=None):
+        self.partner = partner  # None: not onboarded
+        self.policies = list(policies or [])  # active
+        self.keys = []
+        self.requests = {}
+        self.posts = []
+
+    def __call__(self, request):
+        import httpx
+
+        path, method = request.url.path, request.method
+        if path.endswith("/protocol/openid-connect/token"):
+            return httpx.Response(200, json={"access_token": "t"})
+        body = json.loads(request.content) if request.content else None
+        if method == "POST":
+            self.posts.append((path, body))
+        if path.startswith("/keys/"):
+            return httpx.Response(200, json={"keys": self.keys}) if self.keys else httpx.Response(404)
+        if path.startswith("/policies/"):
+            found = [p for p in self.policies if not p.get("data_controller")]
+            return httpx.Response(200, json={"policies": found}) if found and self.partner else httpx.Response(404)
+        if path == "/partners/requests" and method == "GET":
+            return httpx.Response(200, json={"requests": []})
+        if path in ("/partners/requests/onboarding", "/partners/requests/policy"):
+            rid = f"r{len(self.requests) + 1}"
+            self.requests[rid] = body
+            return httpx.Response(201, json={"id": rid})
+        if path.endswith("/approve"):
+            req = self.requests[path.split("/")[-2]]
+            self.partner = {"status": "active"}
+            self.keys += req.get("keys") or []
+            for p in req.get("policies") or []:
+                self.policies = [x for x in self.policies if x.get("data_controller") != p["data_controller"]]
+                self.policies.append({**p, "status": "active", "version": 2})
+            return httpx.Response(200, json={})
+        if path.endswith("/policies"):
+            return httpx.Response(200, json=self.policies) if self.partner else httpx.Response(404)
+        if path.startswith("/partners/"):
+            return httpx.Response(200, json=self.partner) if self.partner else httpx.Response(404)
+        return httpx.Response(404)
+
+
+def _partner_run(pm, tmp_path, monkeypatch):
+    import httpx
+
+    import partner_test
+
+    monkeypatch.setenv("PM_ADMIN_CLIENT_SECRET", "s")
+    a = mock.Mock(base_domain="x.test", composite_url=None, pm_partner_url=None, pm_staff_url=None,
+                  pm_portal_url=None, issuer=None, insecure=False, partner="test-bank", auto_approve=True,
+                  pm_client_id="c", wait=1, poll=0, subject_type="FAYDA_FAN", state_dir=str(tmp_path),
+                  new_key=False, use_case="loan-profile")
+    run = partner_test.Run(a)
+    run.http = httpx.Client(transport=httpx.MockTransport(pm))
+    run.use_case_ref, run.purpose = "loan-profile@1", "credit-assessment"
+    run.keys()
+    return run
+
+
+def test_partner_test_onboards_with_the_use_case_policy(tmp_path, monkeypatch):
+    pm = FakePm()
+    run = _partner_run(pm, tmp_path, monkeypatch)
+    run.onboard()
+    path, body = next(p for p in pm.posts if p[0] == "/partners/requests/onboarding")
+    assert body["partner_id"] == "PARTNER_TEST_BANK"
+    assert body["policies"] == [kit.use_case_policy_payload(["loan-profile@1"], ["credit-assessment"])]
+    run.access()  # granted by the onboarding: no policy request
+    assert not any(p[0] == "/partners/requests/policy" for p in pm.posts)
+
+
+def test_partner_test_raises_a_policy_request_for_an_onboarded_partner(tmp_path, monkeypatch):
+    pm = FakePm(partner={"status": "active"},
+                policies=[{**kit.use_case_policy_payload(["insurance@1"]), "status": "active", "version": 1}])
+    run = _partner_run(pm, tmp_path, monkeypatch)
+    run.access()
+    path, body = next(p for p in pm.posts if p[0] == "/partners/requests/policy")
+    assert body["partner_id"] == "PARTNER_TEST_BANK"
+    (pol,) = body["policies"]
+    assert pol["data_controller"] is None and pol["allowed_use_cases"] == ["insurance@1", "loan-profile@1"]
+    assert any(p[0].endswith("/approve") for p in pm.posts)

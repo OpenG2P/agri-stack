@@ -2,7 +2,7 @@
 
 Partner → composite: a signed envelope ``{signature, header, message}``.
 Steps: verify the partner's signature (PM key, fail closed) → resolve the use
-case → allowed partner → validate input → rate limit → consent checks (in
+case → the partner's use-case grant (PM policy, fail closed) → validate input → rate limit → consent checks (in
 exchange mode, then consent tokens from the exchange Consent Manager) → run the
 sources as a DAG → partial-response rule → mapping and derived values → sign
 the response. Nothing is stored; logs carry the request ID, use case, partner,
@@ -34,6 +34,7 @@ from .crypto import CompositeCrypto
 from .expr import evaluate, set_path
 from .loader import CompiledUseCase, UseCaseRegistry
 from .models import ParameterError, coerce_parameter
+from .policies import PartnerPolicyStore, PolicyUnavailable
 from .ratelimit import RateLimiter
 from .templates import TemplateRenderError, render_query
 
@@ -91,6 +92,7 @@ class CompositeEngine:
         audit: Optional[AuditEmitter] = None,
         limiter: Optional[RateLimiter] = None,
         activity=None,
+        policies: Optional[PartnerPolicyStore] = None,
     ):
         self.settings = settings
         self.registry = registry
@@ -100,6 +102,8 @@ class CompositeEngine:
         self.limiter = limiter or RateLimiter()
         # The console's call log (core.activity.ActivityStore); None or disabled → not recorded.
         self.activity = activity
+        # Partner use-case grants (PM policies); None → every call is refused (fail closed).
+        self.policies = policies
 
     # ── partner-facing entry point ───────────────────────────────────────────
 
@@ -222,9 +226,7 @@ class CompositeEngine:
             raise QueryError(401, "signature_invalid", "the request signature does not verify against the sender's Partner Management key")
         found["authenticated"] = True
 
-        allowed = compiled.spec.allowed_partners
-        if "*" not in allowed and sender not in allowed:
-            raise QueryError(403, "partner_not_allowed", f"partner '{sender}' may not use {compiled.ref}")
+        await self._check_grant(sender, compiled)
 
         subject = message.get("subject")
         if not isinstance(subject, dict) or not isinstance(subject.get("type"), str) or not subject.get("type") \
@@ -233,6 +235,21 @@ class CompositeEngine:
         if subject["type"] not in compiled.spec.input.subject.id_types:
             raise QueryError(400, "invalid_input", f"subject type must be one of {compiled.spec.input.subject.id_types}")
         return compiled, {"type": subject["type"], "value": subject["value"].strip()}
+
+    async def _check_grant(self, sender: str, compiled: CompiledUseCase):
+        """The sender's use-case policy in Partner Management must grant ``name@major`` (fail closed)."""
+        if self.policies is None:
+            raise QueryError(503, "partner_policy_unavailable",
+                             "the Composite has no Partner Management policy source configured")
+        try:
+            granted = await self.policies.granted(sender, compiled.ref)
+        except PolicyUnavailable:
+            raise QueryError(503, "partner_policy_unavailable",
+                             "Partner Management cannot be read to check the partner's use-case grant; "
+                             "try again later") from None
+        if not granted:
+            raise QueryError(403, "partner_not_allowed",
+                             f"partner '{sender}' is not granted the use case {compiled.ref} in Partner Management")
 
     def _check_freshness(self, message_ts):
         skew = self.settings.request_max_skew_seconds
@@ -346,7 +363,7 @@ class CompositeEngine:
             "consent_jws": message["consent_jws"],
             "partner_id": self.settings.composite_partner_id,
             "issue_receipts": True,
-            "request_context": {"subject_id": subject},
+            "request_context": self._request_context(compiled, subject),
         }
         if any(src.scopes or src.optional_scopes for src in compiled.spec.sources):
             # Consent tokens carry only the scopes this use case asks for (CM: granted ∩ policy ∩ requested),
@@ -355,6 +372,15 @@ class CompositeEngine:
                 decode_claims(message["consent_jws"]), compiled.spec.sources)
         decision = await self._exchange_validate(base, body, request_id)
         return self._receipts_and_preset(compiled, decision, granted)
+
+    @staticmethod
+    def _request_context(compiled: CompiledUseCase, subject) -> Dict[str, Any]:
+        """The exchange CM's request context: the subject, and the use case (``name@major``) and its
+        purpose, so the CM applies the consenting partner's use-case policy in Partner Management."""
+        context: Dict[str, Any] = {"subject_id": subject, "use_case": compiled.ref}
+        if compiled.spec.purpose:
+            context["purpose"] = compiled.spec.purpose
+        return context
 
     async def _exchange_validate(self, base: str, body: Dict[str, Any], request_id: str) -> Dict[str, Any]:
         """POST the exchange CM's /validate; a permit decision, or a QueryError."""
@@ -429,7 +455,7 @@ class CompositeEngine:
             "consent_partner_id": partner_id,
             "partner_id": self.settings.composite_partner_id,
             "issue_receipts": True,
-            "request_context": {"subject_id": subject},
+            "request_context": self._request_context(compiled, subject),
         }
         scopes = declared_scopes(compiled.spec.sources)
         if scopes is not None:

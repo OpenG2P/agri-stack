@@ -2,7 +2,7 @@
 
 A read-only web console for the Agri Stack use-case composite service: what the composite is
 configured with, the published use cases (sources, consent scopes, output fields), the
-registries it reads from and their data scopes, the partners allowed to call it and their keys
+registries it reads from and their data scopes, the partners granted it (use-case policies) and their keys
 in Partner Management, and the calls it has served.
 
 Built with Next.js 16 (standalone output), React 19, next-intl, Tailwind 4 and lucide-react, on

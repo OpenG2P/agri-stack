@@ -73,6 +73,9 @@ async def test_exchange_sends_each_registry_its_receipt(x):
     assert req["issue_receipts"] is True
     assert req["partner_id"] == "agri-composite"
     assert req["request_context"]["subject_id"] == env["message"]["subject"]
+    # the use case (name@major) and its purpose: the CM applies bank-a's use-case policy in PM
+    assert req["request_context"]["use_case"] == "loan-profile@1"
+    assert req["request_context"]["purpose"] == "credit-assessment"
     # receipts carry only the use case's scopes (required and optional), nothing else the consent grants
     assert req["request_context"]["requested_scopes"] == sorted(s for scopes in SCOPES.values() for s in scopes)
     assert [authorize(c)["consent_jws"] for c in x.registries.calls_to(FR_URL)] == ["fr.receipt.jws"]
@@ -196,6 +199,8 @@ async def test_consent_id_is_checked_at_the_exchange_cm_and_registries_get_recei
     assert req["consent_id"] == "c-123" and req["consent_partner_id"] == "bank-a"
     assert req["partner_id"] == "agri-composite" and req["issue_receipts"] is True
     assert "consent_jws" not in req
+    assert req["request_context"]["use_case"] == "loan-profile@1"
+    assert req["request_context"]["purpose"] == "credit-assessment"
     assert req["request_context"]["requested_scopes"] == sorted(s for v in SCOPES.values() for s in v)
     assert [authorize(c)["consent_jws"] for c in x.registries.calls_to(FR_URL)] == ["fr.receipt.jws"]
 

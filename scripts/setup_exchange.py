@@ -16,8 +16,8 @@ and Secrets, and reaches the services through `kubectl port-forward` (closed on 
 Steps
   1. Discover   the composite, Partner Management (PM) and Consent Manager (CM) of the exchange
                 and of each department namespace.
-  2. Tokens     admin tokens for each PM and CM (Keycloak client credentials; the client
-                secrets are read from the cluster into memory, never printed).
+  2. Tokens     admin tokens for each PM (Keycloak client credentials; the client secrets are
+                read from the cluster into memory, never printed).
   3. Use cases  the composite's published use cases: purposes, and the data scopes each one
                 may need per registry (consent_scopes, required + optional).
   4. Plan       (GETs only) what is missing:
@@ -25,18 +25,19 @@ Steps
                     kept if the exchange PM already serves its key;
                   that key in the exchange PM and in each department PM (registries check the
                     composite's signature at their own PM);
-                  exchange consent mode: in each department CM, a binding and policy for the
-                    composite (audience = its partner ID) per registry, with the use cases'
-                    scopes and purposes; and the department CM must trust the exchange CM's
-                    consent tokens (checked, not set: it is a Helm value).
-  5. Apply      after a typed "yes" (or --yes): the PM requests (raised and approved), the CM
-                bindings and policies, the Secret and a restart of the composite.
+                  exchange consent mode: in each department PM, the composite's ceiling — a
+                    scope policy for PARTNER_<COMPOSITE> per registry served there, with the
+                    union of the use cases' scopes (required + optional) and their purposes
+                    (a PM policy request, raised and approved); and the department CM must
+                    trust the exchange CM's consent tokens (checked, not set: it is a Helm value).
+  5. Apply      after a typed "yes" (or --yes): the PM requests (raised and approved), the Secret
+                and a restart of the composite.
 
-Partners (e.g. a bank) are not set up here: they onboard through PM and the CM, as
-scripts/partner_test.py shows.
+Partners (e.g. a bank) are not set up here: they onboard in the exchange's PM with a
+use-case policy, as scripts/partner_test.py shows.
 
-Exit codes: 0 ok, 1 error, 2 a decision is needed (consent-token trust, AWE approval, a key conflict,
-writes not confirmed).
+Exit codes: 0 ok, 1 error, 2 a decision is needed (consent-token trust, an open PM request that
+does not fit, a key conflict, writes not confirmed).
 Needs: pip install -r scripts/requirements.txt
 """
 
@@ -221,7 +222,8 @@ def parse_registries(items: List[str]) -> Dict[str, str]:
 
 
 def needed_policies(use_cases: List[dict], controllers: List[str]) -> Dict[str, dict]:
-    """The composite's CM policy per registry: what all published use cases may ask that registry for.
+    """The composite's PM scope policy per registry (its ceiling in the department): what all
+    published use cases may ask that registry for.
 
     Scopes: each use case's consent_scopes (required + optional) for the registry; a use case
     that reads the registry but declares no scopes for it takes the kit's scopes (GRANTS), if any.
@@ -243,9 +245,7 @@ def needed_policies(use_cases: List[dict], controllers: List[str]) -> Dict[str, 
     for c in controllers:
         if not scopes[c]:
             continue
-        body = kit.policy_payload(c, sorted(purposes[c])[0], sorted(scopes[c]))
-        body["allowed_purposes"] = sorted(purposes[c])
-        out[c] = body
+        out[c] = kit.scope_policy_payload(c, sorted(purposes[c]), sorted(scopes[c]))
     return out
 
 
@@ -326,7 +326,7 @@ def check(r: httpx.Response, what: str, ok=(200, 201)) -> httpx.Response:
 # ── cluster discovery ────────────────────────────────────────────────────────
 
 class Commons:
-    """PM, CM and Keycloak of one commons install (one namespace; no secret values)."""
+    """PM, the CM's exchange settings and Keycloak of one commons install (one namespace; no secret values)."""
 
     def __init__(self, kube: Kube, args, *, pm_partner_url: Optional[str] = None):
         self.kube = kube
@@ -354,20 +354,20 @@ class Commons:
         self.pm_auth_client = env_value(penv, "PARTNER_MANAGER_AUTH_ADMIN_CLIENT_ID", "partner-management")
         self.pm_role = env_value(penv, "PARTNER_MANAGER_AUTH_ADMIN_ROLE", "partner_manager")
 
-        # Consent Manager admin API (the one with auth on, not the partner/validate API)
-        cm = find_deploy(deploys, self.ns,
-                         lambda n, e: "CONSENT_MANAGER_AUTH_ISSUER" in e and "partner" not in n
-                         and env_value(e, "CONSENT_MANAGER_AUTH_ENABLED", "true").lower() == "true",
-                         "Consent Manager admin API")
-        menv = container_env(cm)
-        self.cm_svc, self.cm_port = service_for(services, cm)
+        # Consent Manager admin API (the one with auth on): only its issuer and Keycloak URL are read.
+        # Partner policies are in PM; the CM is not written to.
+        try:
+            cm = find_deploy(deploys, self.ns,
+                             lambda n, e: "CONSENT_MANAGER_AUTH_ISSUER" in e and "partner" not in n
+                             and env_value(e, "CONSENT_MANAGER_AUTH_ENABLED", "true").lower() == "true",
+                             "Consent Manager admin API")
+        except KitError:
+            cm = None
+        menv = container_env(cm) if cm else {}
         self.cm_issuer = env_value(menv, "CONSENT_MANAGER_AUTH_ISSUER")
-        self.cm_role = env_value(menv, "CONSENT_MANAGER_AUTH_ADMIN_ROLE", "CONSENT_MANAGER_ADMIN")
-        self.cm_awe_enabled = env_value(menv, "CONSENT_MANAGER_AWE_ENABLED", "false").lower() == "true"
-        self.cm_client_id = args.cm_client_id
         # Agri Stack exchange settings, read from the CM partner API (it serves /validate)
         cmp = next((d for d in deploys if d["metadata"]["name"].endswith("cm-partner-api")), cm)
-        xenv = container_env(cmp)
+        xenv = container_env(cmp) if cmp else {}
         self.cm_receipt_issuer = env_value(xenv, "CONSENT_MANAGER_RECEIPT_ISSUER")
         self.cm_receipt_presenters = json_list(env_value(xenv, "CONSENT_MANAGER_RECEIPT_PRESENTERS"))
         self.cm_trusted_issuers = trusted_issuers(env_value(xenv, "CONSENT_MANAGER_TRUSTED_RECEIPT_ISSUERS"))
@@ -450,14 +450,15 @@ class State:
 # ── the run ──────────────────────────────────────────────────────────────────
 
 class Site:
-    """One namespace's PM and CM: the exchange's own, or a department's."""
+    """One namespace's PM (and CM settings): the exchange's own, or a department's."""
 
     def __init__(self, c: Commons, kube: Kube, pf: PortForwards, controllers: List[str], own: bool):
         self.c, self.kube, self.pf = c, kube, pf
         self.ns = kube.namespace
         self.controllers = controllers  # registries (data controllers) served from this namespace
         self.own = own  # the exchange namespace
-        self.pm_token = self.cm_token = ""
+        self.pm_token = ""
+        self.approved: set = set()  # PM request IDs approved in this run
 
 
 class Setup:
@@ -507,14 +508,12 @@ class Setup:
                  + (f"; registries {', '.join(site.controllers)})" if site.controllers else ")"))
             info(f"PM             staff API svc/{c.pm_staff_svc}:{c.pm_staff_port}, partner API "
                  f"svc/{c.pm_partner_svc}:{c.pm_partner_port}, role {c.pm_role}, issuer {', '.join(c.pm_issuers)}")
-            info(f"CM             admin API svc/{c.cm_svc}:{c.cm_port}, role {c.cm_role}, issuer {c.cm_issuer}, "
-                 f"AWE approval of policies {'ON' if c.cm_awe_enabled else 'off'}")
             if c.cm_receipt_issuer or c.cm_trusted_issuers:
                 info(f"               consent tokens: issues as {c.cm_receipt_issuer or '-'} to {c.cm_receipt_presenters or '-'}; "
                      f"trusts {[x.get('issuer') for x in c.cm_trusted_issuers] or '-'}")
-            for label, name in (("PM admin client", c.pm_client_id), ("CM admin client", c.cm_client_id)):
-                data = site.kube.secret(name)
-                info(f"{label:16}{site.ns}/secret/{name}: {'MISSING' if data is None else 'keys ' + str(sorted(data))}")
+            data = site.kube.secret(c.pm_client_id)
+            info(f"PM admin client {site.ns}/secret/{c.pm_client_id}: "
+                 f"{'MISSING' if data is None else 'keys ' + str(sorted(data))}")
 
         if t.consent_mode == "exchange":
             # Every department must accept the exchange CM's consent tokens.
@@ -528,7 +527,8 @@ class Setup:
                         warn(gap)
         else:
             warn(f"consent mode {t.consent_mode}: registries check each PARTNER's consent at their own CM, so "
-                 "each partner needs a binding there; this script sets up only the composite's key")
+                 "each partner needs a scope policy in each department's PM; this script sets up only the "
+                 "composite's key")
 
     def _current_context(self) -> str:
         try:
@@ -572,18 +572,13 @@ class Setup:
             pm_ok = c.pm_role in client_roles(token_claims(site.pm_token), c.pm_auth_client)
             info(f"{site.ns}: PM  client {c.pm_client_id}: role {c.pm_role} {'present' if pm_ok else 'MISSING'}")
             missing = missing or not pm_ok
-            if self._cm_needed(site):
-                site.cm_token = self._token(c.cm_issuer, c.cm_client_id, "CM", site)
-                # CM accepts its role from the realm or any client.
-                cm_ok = c.cm_role in client_roles(token_claims(site.cm_token))
-                info(f"{site.ns}: CM  client {c.cm_client_id}: role {c.cm_role} {'present' if cm_ok else 'MISSING'}")
-                missing = missing or not cm_ok
         if missing:
             raise KitError("an admin client lacks its role (see above); grant it in Keycloak's staff realm or pass "
-                           "--pm-client-id / --cm-client-id", kit.EXIT_DECISION)
+                           "--pm-client-id", kit.EXIT_DECISION)
 
-    def _cm_needed(self, site: Site) -> bool:
-        """A namespace that serves registries checks the exchange's consent tokens for the composite at its CM."""
+    def _ceiling_needed(self, site: Site) -> bool:
+        """A namespace that serves registries checks the exchange's consent tokens for the composite against
+        the composite's scope policy in its own PM (the ceiling)."""
         return self.t.consent_mode == "exchange" and bool(site.controllers)
 
     # 3. use cases ------------------------------------------------------------
@@ -595,12 +590,12 @@ class Setup:
         for uc in self.published:
             info(f"{uc.get('use_case')}: purpose {uc.get('purpose')}, registries {uc.get('consent_grants_needed')}")
         if not self.published:
-            warn("no published use cases: no CM policies are planned")
-        controllers = [c for s in self.sites if self._cm_needed(s) for c in s.controllers]
+            warn("no published use cases: no PM policies are planned")
+        controllers = [c for s in self.sites if self._ceiling_needed(s) for c in s.controllers]
         self.policies = needed_policies(self.published, controllers)
         for c in controllers:
             body = self.policies.get(c)
-            info(f"policy {c}: " + (f"scopes {body['allowed_data_scopes']}, purposes {body['allowed_purposes']}"
+            info(f"scope policy {c}: " + (f"scopes {body['allowed_data_scopes']}, purposes {body['allowed_purposes']}"
                                     if body else "no use case reads it; nothing planned"))
 
     # 4. plan -----------------------------------------------------------------
@@ -613,8 +608,16 @@ class Setup:
     def _pm_admin(self, site: Site):
         return site.pf.url(site.c.pm_staff_svc, site.c.pm_staff_port), {"Authorization": f"Bearer {site.pm_token}"}
 
-    def _cm_admin(self, site: Site):
-        return site.pf.url(site.c.cm_svc, site.c.cm_port), {"Authorization": f"Bearer {site.cm_token}"}
+    def _active_policies(self, ref: str, site: Site, partner: Optional[dict]) -> List[dict]:
+        if partner is None:
+            return []
+        pm_base, pm_h = self._pm_admin(site)
+        r = self.http.get(f"{pm_base}/partners/{ref}/policies", headers=pm_h)
+        if r.status_code == 404:
+            return []
+        data = check(r, f"{site.ns}: PM GET /partners/{ref}/policies").json()
+        items = data.get("policies") if isinstance(data, dict) else data
+        return [p for p in items or [] if isinstance(p, dict)]
 
     def _signing_secret_state(self) -> Optional[dict]:
         data = self.kube.secret(self.t.signing_secret)
@@ -631,7 +634,7 @@ class Setup:
         return out
 
     def plan(self) -> List[str]:
-        """Read PM, CM and the signing Secret (GETs only) and work out the writes. Returns their descriptions."""
+        """Read PM and the signing Secret (GETs only) and work out the writes. Returns their descriptions."""
         a, t = self.a, self.t
         step(f"4. Plan (GETs only; composite key in {a.state_dir})")
         (self.comp_key, self.comp_p12, self.comp_password, self.comp_kid,
@@ -671,32 +674,29 @@ class Setup:
             if pm_plan["state"] == "conflict":
                 self.conflicts.append(f"{site.ns}: {pm_plan['reason']}")
 
-            cm_plan = None
-            needed = {c: self.policies[c] for c in site.controllers if c in self.policies}
-            if self._cm_needed(site) and needed:
-                cm_base, cm_h = self._cm_admin(site)
-                r = self.http.get(f"{cm_base}/consent/v1/partners", headers=cm_h, params={"audience": t.composite_id})
-                bindings = check(r, f"{site.ns}: CM GET /consent/v1/partners").json()
-                policies = {}
-                for b in bindings:
-                    r = self.http.get(f"{cm_base}/consent/v1/partners/{b['id']}/policies", headers=cm_h)
-                    policies[b["id"]] = check(r, "CM GET policies").json() if r.status_code != 404 else []
-                    active = next((p for p in policies[b["id"]] if p.get("status") == "active"), None)
-                    info(f"{site.ns}: CM {b['audience']} → {b['controller_id']}: binding {b['status']}, "
-                         f"active policy {'v' + str(active['version']) if active else 'none'}")
-                if not bindings:
-                    info(f"{site.ns}: CM audience {t.composite_id}: no bindings")
-                cm_plan = kit.plan_cm(audience=t.composite_id, pm_ref=comp_ref, needed=needed,
-                                      bindings=bindings, policies=policies)
-                self.conflicts += [f"{site.ns}: {c}" for c in cm_plan["conflicts"]]
-                if site.c.cm_awe_enabled:
-                    warn(f"CM in {site.ns} sends new or wider policies to AWE for approval")
+            policy_plan = None
+            needed = [self.policies[c] for c in site.controllers if c in self.policies]
+            if self._ceiling_needed(site) and needed:
+                active = self._active_policies(comp_ref, site, partner)
+                for p in active:
+                    if p.get("data_controller"):
+                        info(f"{site.ns}: PM {comp_ref}: active scope policy {p['data_controller']} v{p.get('version')}")
+                policy_plan = kit.plan_pm_policies(needed=needed, active=active, pending=pending)
+                for c in policy_plan["ok"]:
+                    info(f"{site.ns}: PM {comp_ref}: scope policy {c} covers the use cases")
+                self.conflicts += [f"{site.ns}: PM {comp_ref}: {c}" for c in policy_plan["conflicts"]]
+                if policy_plan["request"] and any(a["op"] == "onboard" for a in pm_plan["actions"]):
+                    # A new partner: its policies go in the onboarding request.
+                    pm_plan["onboard_policies"] = policy_plan["request"]
+                    policy_plan = {**policy_plan, "request": []}
 
-            self.site_plans.append((site, pm_plan, cm_plan))
+            self.site_plans.append((site, pm_plan, policy_plan))
             prefix = f"[{site.ns}] "
             writes += [prefix + kit.describe_pm_action(comp_ref, act, kid) for act in pm_plan["actions"]]
-            if cm_plan:
-                writes += [prefix + kit.describe_cm_action(t.composite_id, act) for act in cm_plan["actions"]]
+            writes += [prefix + f"PM: the onboarding request carries {kit.describe_policy(p)}"
+                       for p in pm_plan.get("onboard_policies") or []]
+            if policy_plan:
+                writes += [prefix + w for w in kit.describe_policy_actions(comp_ref, policy_plan)]
 
         if self.secret_plan["write_secret"]:
             writes.append(f"[{t.ns}] Kubernetes: {'replace' if secret_state else 'create'} secret/{t.signing_secret} "
@@ -720,6 +720,15 @@ class Setup:
             raise KitError("not confirmed; nothing was changed", kit.EXIT_DECISION)
 
     # 5. apply ----------------------------------------------------------------
+    def _approve(self, site: Site, request_id: str):
+        if request_id in site.approved:
+            return
+        pm_base, pm_h = self._pm_admin(site)
+        check(self.http.post(f"{pm_base}/partners/requests/{request_id}/approve", headers=pm_h,
+                             json={"notes": f"approved by {kit.MANAGED_BY}"}), f"PM approve {request_id}")
+        site.approved.add(request_id)
+        info(f"{site.ns}: PM request {request_id} approved")
+
     def _apply_pm(self, site: Site, plan: dict):
         t = self.t
         ref = kit.pm_reference(t.composite_id)
@@ -734,7 +743,8 @@ class Setup:
                 request_id = act["request_id"]
             elif act["op"] == "onboard":
                 r = self.http.post(f"{pm_base}/partners/requests/onboarding", headers=pm_h,
-                                   json=kit.onboarding_payload(t.composite_id, "Agri Stack composite", key, kid))
+                                   json=kit.onboarding_payload(t.composite_id, "Agri Stack composite", key, kid,
+                                                               plan.get("onboard_policies")))
                 request_id = check(r, f"PM onboard {ref}").json()["id"]
                 info(f"{site.ns}: PM {ref}: onboarding request {request_id}")
             else:  # key_update
@@ -743,54 +753,43 @@ class Setup:
                 r = self.http.post(f"{pm_base}/partners/requests/key-update", headers=pm_h, json=body)
                 request_id = check(r, f"PM key-update {ref}").json()["id"]
                 info(f"{site.ns}: PM {ref}: key-update request {request_id}")
-            check(self.http.post(f"{pm_base}/partners/requests/{request_id}/approve", headers=pm_h,
-                                 json={"notes": f"approved by {kit.MANAGED_BY}"}), f"PM approve {request_id}")
-            info(f"{site.ns}: PM {ref}: request {request_id} approved")
+            self._approve(site, request_id)
         if plan["actions"]:
             if not any(k.get("kid") == kid for k in self._servable(ref, site)):
                 raise KitError(f"{site.ns}: PM still does not serve {ref} kid {kid} after the changes")
             info(f"{site.ns}: PM {ref}: key {kid} is served")
 
-    def _apply_cm(self, site: Site, plan: dict):
-        audience = self.t.composite_id
-        cm_base, cm_h = self._cm_admin(site)
-        binding_ids: Dict[str, str] = {}
-        for act in plan["actions"]:
-            controller = act["controller"]
-            if act["op"] == "create_binding":
-                r = self.http.post(f"{cm_base}/consent/v1/partners", headers=cm_h,
-                                   json=kit.binding_payload(audience, controller))
-                if r.status_code == 409:
-                    found = check(self.http.get(f"{cm_base}/consent/v1/partners", headers=cm_h,
-                                                params={"audience": audience}), "CM list").json()
-                    match = next((b for b in found if b["controller_id"] == controller), None)
-                    if not match:
-                        raise KitError(f"CM create binding: {_detail(r)}")
-                    binding_ids[controller] = match["id"]
-                else:
-                    binding_ids[controller] = check(r, "CM create binding").json()["id"]
-                info(f"{site.ns}: CM {audience} → {controller}: binding {binding_ids[controller]}")
-            elif act["op"] == "activate_binding":
-                check(self.http.patch(f"{cm_base}/consent/v1/partners/{act['binding_id']}", headers=cm_h,
-                                      json={"status": "active"}), "CM activate binding")
-                info(f"{site.ns}: CM {audience} → {controller}: binding set active")
-            else:
-                bid = act.get("binding_id") or binding_ids[controller]
-                pol = check(self.http.put(f"{cm_base}/consent/v1/partners/{bid}/policy", headers=cm_h,
-                                          json=act["body"]), "CM put policy").json()
-                info(f"{site.ns}: CM {audience} → {controller}: policy v{pol.get('version')} {pol.get('status')}")
-                if pol.get("status") == "pending":
-                    raise KitError(f"{site.ns}: CM policy for {audience} → {controller} is pending AWE approval "
-                                   f"(request {pol.get('awe_request_id')}); approve it in AWE, then rerun",
-                                   kit.EXIT_DECISION)
+    def _apply_policies(self, site: Site, plan: dict, needed: List[dict]):
+        ref = kit.pm_reference(self.t.composite_id)
+        pm_base, pm_h = self._pm_admin(site)
+        for request_id in plan["approve"]:
+            self._approve(site, request_id)
+        if plan["request"]:
+            body = kit.policy_request_payload(ref, plan["request"],
+                                              f"{kit.MANAGED_BY}: the composite's scope policies (ceiling)")
+            request_id = check(self.http.post(f"{pm_base}/partners/requests/policy", headers=pm_h, json=body),
+                               f"PM policy request {ref}").json()["id"]
+            info(f"{site.ns}: PM {ref}: policy request {request_id}")
+            self._approve(site, request_id)
+        # PM's internal policy API (what the department CM reads) must now serve each one.
+        partner_base = site.pf.url(site.c.pm_partner_svc, site.c.pm_partner_port)
+        for body in needed:
+            dc = body["data_controller"]
+            r = self.http.get(f"{partner_base}/policies/{ref}", params={"data_controller": dc})
+            served = [] if r.status_code == 404 else (check(r, f"{site.ns}: PM GET /policies/{ref}").json()
+                                                      .get("policies") or [])
+            if not any(kit.policy_covers(p, body, "FAYDA_FAN") for p in served):
+                raise KitError(f"{site.ns}: PM does not serve {ref}'s scope policy {dc} after the changes")
+            info(f"{site.ns}: PM {ref}: scope policy {dc} is served")
 
     def apply(self):
         step("5. Apply")
         t = self.t
-        for site, pm_plan, cm_plan in self.site_plans:
+        for site, pm_plan, policy_plan in self.site_plans:
             self._apply_pm(site, pm_plan)
-            if cm_plan:
-                self._apply_cm(site, cm_plan)
+            if policy_plan is not None:
+                needed = [self.policies[c] for c in site.controllers if c in self.policies]
+                self._apply_policies(site, policy_plan, needed)
         if self.secret_plan["write_secret"]:
             self.kube.apply(kit.signing_secret_manifest(t.signing_secret, t.ns, t.signing_keys, self.comp_p12,
                                                         self.comp_password, self.comp_kid))
@@ -816,8 +815,6 @@ def main(argv=None) -> int:
     p.add_argument("--composite-deployment", help="default: discovered")
     p.add_argument("--pm-client-id", help="Keycloak client with PM's admin role; its Secret has the same name "
                                           "(default: PM's PARTNER_MANAGER_AUTH_ADMIN_CLIENT_ID)")
-    p.add_argument("--cm-client-id", default="consent-manager",
-                   help="Keycloak client with CM's admin role; its Secret has the same name")
     p.add_argument("--insecure", action="store_true", help="skip TLS verification towards Keycloak")
     a = p.parse_args(argv)
     a.state_dir = a.state_dir or os.path.join("~", ".agri-stack-setup", a.namespace)

@@ -4,10 +4,9 @@ import { useTranslations } from "next-intl";
 import DataTable, { type DataTableColumn } from "@/components/DataTable";
 import QueryView from "@/components/QueryView";
 import TableSkeleton from "@/components/TableSkeleton";
-import { ChipList, PageHeader } from "@/components/ui";
+import { ChipList, ErrorBox, PageHeader } from "@/components/ui";
 import { PortalLinks } from "@/features/overview/components/PortalLinks";
 import { toUseCaseHref } from "@/features/use-cases/api";
-import { ANY_PARTNER } from "../api";
 import { usePartners } from "../hooks";
 import type { Partner } from "../types";
 
@@ -35,22 +34,18 @@ export default function PartnerListView() {
     const columns: DataTableColumn<Partner>[] = [
         {
             key: "partner",
-            header: t("col_partner_id"),
-            render: (p) =>
-                p.partner_id === ANY_PARTNER ? (
-                    <span title={t("any_partner_hint")}>
-                        <span className="font-mono font-semibold">*</span>
-                        <span className="ml-2 text-[13px] text-gray-600">{t("any_partner")}</span>
-                    </span>
-                ) : (
-                    <span className="font-mono font-medium">{p.partner_id}</span>
-                ),
+            header: t("col_pm_partner_id"),
+            render: (p) => <span className="font-mono font-medium">{p.partner_id}</span>,
         },
-        { key: "pm_reference", header: t("col_pm_reference"), render: (p) => <span className="font-mono text-[13px]">{p.pm_reference || "—"}</span> },
         {
             key: "use_cases",
-            header: t("nav_use_cases"),
+            header: t("col_granted_use_cases"),
             render: (p) => <ChipList items={p.use_cases} mono hrefOf={toUseCaseHref} />,
+        },
+        {
+            key: "policy_version",
+            header: t("col_policy_version"),
+            render: (p) => <span className="font-mono text-[13px]">{p.policy_version ?? "—"}</span>,
         },
         { key: "pm_keys", header: t("col_pm_keys"), render: (p) => <PmKeys partner={p} /> },
     ];
@@ -64,13 +59,21 @@ export default function PartnerListView() {
             />
             <QueryView query={query} loading={<TableSkeleton columns={4} rows={4} />}>
                 {(data) => (
-                    <DataTable
-                        columns={columns}
-                        rows={data.partners}
-                        rowKey={(p) => p.partner_id}
-                        searchText={(p) => [p.partner_id, p.pm_reference ?? "", ...p.use_cases].join(" ")}
-                        emptyMessage={t("no_partners")}
-                    />
+                    <>
+                        {data.pm_error ? (
+                            <ErrorBox>
+                                <p className="font-semibold">{t("pm_policies_error")}</p>
+                                <p className="break-words text-[13px]">{data.pm_error}</p>
+                            </ErrorBox>
+                        ) : null}
+                        <DataTable
+                            columns={columns}
+                            rows={data.partners}
+                            rowKey={(p) => p.partner_id}
+                            searchText={(p) => [p.partner_id, ...p.use_cases].join(" ")}
+                            emptyMessage={t("no_partners")}
+                        />
+                    </>
                 )}
             </QueryView>
         </div>

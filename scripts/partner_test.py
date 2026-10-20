@@ -9,20 +9,20 @@ deployment. Run it from any machine that can reach the environment's hostnames.
 The farmer defaults to a sample farmer every demo install has (--fan to pick another).
 
 Steps
-  1. Use case    GET the use case from the composite (purpose, inputs, consent grants needed).
+  1. Use case    GET the use case from the composite (name@major, purpose, inputs, consent grants needed).
   2. Key         the partner's signing key (EC P-256), kept in --state-dir and reused.
-  3. Onboard     the partner's key in Partner Management (PM).
+  3. Onboard     the partner in the exchange's Partner Management (PM): its key, and its
+                 use-case policy granting the use case under test (name@major) in the same
+                 onboarding request.
                    with PM admin credentials: raise the onboarding (or key-update) request,
                    then wait for a PM admin to approve it in the PM portal; --auto-approve
                    approves it with the same credentials (no manual step);
-                   without them: print the partner ID and public key for a PM admin to
-                   onboard and approve, then wait.
+                   without them: print the partner ID, public key and policy for a PM admin
+                   to onboard and approve, then wait.
                  Either way, the script waits until PM's public key API serves the key.
-  4. Access      the partner's binding and policy per registry in the Consent Manager (CM).
-                   with CM admin credentials: create them (if the CM has AWE approval of
-                   policies turned on — off by default — the approval is waited for);
-                   without them: not checked (a partner cannot see the CM's bindings either);
-                   if the query is refused for consent, the setup a CM admin needs is printed.
+  4. Access      the partner's use-case policy in PM grants the use case: an already onboarded
+                 partner without it gets a PM policy request (approved as in 3; the policy is
+                 widened, never narrowed). The script waits until PM's policy API serves it.
   5. Consent     a consent for the farmer with a grant per registry, signed by the partner. The
                  farmer is --fan, or by default the sample farmer FR-0007 (sample person
                  ETH-IND-0007 of the country pack in openg2p-data, with land and crop
@@ -33,8 +33,7 @@ Steps
 Admin credentials (optional; Keycloak client credentials of the staff realm), from the
 environment so they never appear on a command line:
   PM_ADMIN_CLIENT_SECRET   (client --pm-client-id, default commons-services-staff-portal)
-  CM_ADMIN_CLIENT_SECRET   (client --cm-client-id, default consent-manager)
-With both set and --auto-approve, the whole run needs no manual step.
+With it set and --auto-approve, the whole run needs no manual step.
 
 Exit codes: 0 ok, 1 error, 2 a step was not completed (timed out or refused), 3 the query
 failed or a source did not answer ok.
@@ -49,7 +48,7 @@ import os
 import sys
 import time
 from datetime import datetime
-from typing import Dict, List
+from typing import List
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -104,8 +103,6 @@ class Urls:
         self.pm_partner = pick(a.pm_partner_url, "partner-management-partner-api")
         self.pm_staff = pick(a.pm_staff_url, "pm-staff-portal")
         self.pm_portal = pick(a.pm_portal_url, "partner-management")
-        self.cm_admin = pick(a.cm_url, "consent-manager")
-        self.cm_portal = pick(a.cm_portal_url, "consent-manager")
         self.issuer = (a.issuer or (f"https://keycloak.{bd}/realms/staff" if bd else "")).rstrip("/")
         missing = [n for n, v in vars(self).items() if not v]
         if missing:
@@ -181,6 +178,7 @@ class Run:
         step(f"1. Use case {self.a.use_case} ({self.u.composite})")
         r = check(self.http.get(f"{self.u.composite}/composite/v1/use-cases/{self.a.use_case}"), "GET use case")
         d = r.json()
+        self.use_case_ref = d.get("use_case") or self.a.use_case  # name@major: what the partner's policy grants
         self.purpose = self.a.purpose or d.get("purpose") or kit.DEFAULT_PURPOSE
         grants = d.get("consent_grants_needed") or list(kit.GRANTS)
         # The use case says what the consent must (and may) grant per registry; the
@@ -205,23 +203,46 @@ class Run:
         self.key, self.kid, new = Keys(self.a.state_dir).partner(self.a.partner, self.a.new_key)
         info(f"{self.a.partner} ({self.ref}): kid {self.kid}" + (" (new, saved)" if new else ""))
 
+    def needed_policy(self) -> dict:
+        """The partner's use-case policy for this test (PM PolicyInput)."""
+        return kit.use_case_policy_payload([self.use_case_ref], [self.purpose])
+
+    def _pm_admin(self):
+        """(staff API base, headers) with PM admin credentials, or None without them."""
+        secret = os.environ.get("PM_ADMIN_CLIENT_SECRET")
+        if not secret:
+            return None
+        if not getattr(self, "_pm_headers", None):
+            self._pm_headers = {"Authorization": f"Bearer {self._token(self.a.pm_client_id, secret, 'PM')}"}
+        return self.u.pm_staff, self._pm_headers
+
+    def _pm_state(self, base: str, h: dict):
+        r = self.http.get(f"{base}/partners/{self.ref}", headers=h)
+        partner = None if r.status_code == 404 else check(r, f"PM GET /partners/{self.ref}").json()
+        r = self.http.get(f"{base}/partners/requests", headers=h, params={"partner_id": self.ref, "status": "created"})
+        pending = check(r, "PM GET /partners/requests").json().get("requests") or []
+        return partner, pending
+
+    def _granted(self) -> bool:
+        """PM's policy API serves a use-case policy for the partner that covers the test."""
+        r = self.http.get(f"{self.u.pm_partner}/policies/{self.ref}", params={"data_controller": ""})
+        if r.status_code == 404:
+            return False
+        served = check(r, f"PM GET /policies/{self.ref}").json().get("policies") or []
+        return any(kit.policy_covers(p, self.needed_policy(), self.a.subject_type) for p in served)
+
     # 3. onboard --------------------------------------------------------------
     def onboard(self):
         step(f"3. Onboard {self.ref} in Partner Management")
         if self._serves(self.kid):
             info(f"PM serves kid {self.kid}: nothing to do")
             return
-        secret = os.environ.get("PM_ADMIN_CLIENT_SECRET")
-        if not secret:
+        admin = self._pm_admin()
+        if not admin:
             self._onboard_manually()
             return
-        token = self._token(self.a.pm_client_id, secret, "PM")
-        h = {"Authorization": f"Bearer {token}"}
-        base = self.u.pm_staff
-        r = self.http.get(f"{base}/partners/{self.ref}", headers=h)
-        partner = None if r.status_code == 404 else check(r, f"PM GET /partners/{self.ref}").json()
-        r = self.http.get(f"{base}/partners/requests", headers=h, params={"partner_id": self.ref, "status": "created"})
-        pending = check(r, "PM GET /partners/requests").json().get("requests") or []
+        base, h = admin
+        partner, pending = self._pm_state(base, h)
         plan = kit.plan_pm_partner(ref=self.ref, kid=self.kid, pub_pem=kit.public_pem(self.key),
                                servable=self.served_keys(self.ref), partner=partner, pending=pending)
         info(f"{self.ref}: {'status ' + partner['status'] if partner else 'not in PM'} → {plan['reason']}")
@@ -238,9 +259,10 @@ class Run:
                 info(f"open request {request_id} already carries kid {self.kid}")
             elif act["op"] == "onboard":
                 r = self.http.post(f"{base}/partners/requests/onboarding", headers=h,
-                                   json=kit.onboarding_payload(self.a.partner, label, self.key, self.kid))
+                                   json=kit.onboarding_payload(self.a.partner, label, self.key, self.kid,
+                                                               [self.needed_policy()]))
                 request_id = check(r, "PM onboarding request").json()["id"]
-                info(f"onboarding request {request_id} raised")
+                info(f"onboarding request {request_id} raised, with the use-case policy granting {self.use_case_ref}")
             else:  # key_update
                 body = {"partner_id": self.ref, "description": f"{MANAGED_BY}: key {self.kid}",
                         "keys": kit.onboarding_payload(self.a.partner, label, self.key, self.kid)["keys"]}
@@ -265,74 +287,54 @@ class Run:
         info(f"  portal      {self.u.pm_portal}")
         info(f"  partner ID  {self.ref}")
         info(f"  key         kid {self.kid}, algorithm {kit.SIGNING_ALG}, public key in {path}")
+        info(f"  policy      {kit.describe_policy(self.needed_policy())}")
         info("  then approve the onboarding (or key-update) request")
         self._wait(f"PM to serve {self.ref} kid {self.kid}", lambda: self._serves(self.kid))
         info(f"PM serves kid {self.kid}")
 
     # 4. access ---------------------------------------------------------------
     def access(self):
-        step(f"4. Consent Manager access for {self.a.partner}")
-        needed = {c: kit.policy_payload(c, self.purpose, self.scopes[c]) for c in self.controllers}
-        secret = os.environ.get("CM_ADMIN_CLIENT_SECRET")
-        if not secret:
-            # Like a partner, the script cannot see the CM's bindings without admin rights: it goes on
-            # to the query, and only if that is refused for consent does it print the setup needed.
-            info("no CM admin credentials (CM_ADMIN_CLIENT_SECRET): not checked; the query shows whether "
-                 "the CM grants access")
-            self.cm_unchecked = needed
+        step(f"4. Use-case grant for {self.a.partner} in Partner Management ({self.use_case_ref})")
+        if self._granted():
+            info(f"PM serves {self.ref}'s use-case policy granting {self.use_case_ref}: nothing to do")
             return
-        token = self._token(self.a.cm_client_id, secret, "CM")
-        h = {"Authorization": f"Bearer {token}"}
-        base = f"{self.u.cm_admin}/consent/v1"
-        bindings = check(self.http.get(f"{base}/partners", headers=h, params={"audience": self.a.partner}),
-                         "CM GET bindings").json()
-        policies = {}
-        for b in bindings:
-            r = self.http.get(f"{base}/partners/{b['id']}/policies", headers=h)
-            policies[b["id"]] = check(r, "CM GET policies").json() if r.status_code != 404 else []
-        plan = kit.plan_cm(audience=self.a.partner, pm_ref=self.ref, needed=needed, bindings=bindings, policies=policies)
-        for c in plan["ok"]:
-            info(f"{self.a.partner} → {c}: binding and policy in place")
-        pending = []
-        for conflict in plan["conflicts"]:
-            if "pending AWE approval" in conflict:
-                pending.append(conflict)
+        admin = self._pm_admin()
+        if not admin:
+            info("no PM admin credentials (PM_ADMIN_CLIENT_SECRET): a PM admin raises and approves a policy "
+                 f"request for {self.ref} in {self.u.pm_portal}:")
+            info(f"  {kit.describe_policy(self.needed_policy())}")
+            self._wait(f"PM to serve {self.ref}'s use-case policy granting {self.use_case_ref}", self._granted)
+            info("granted")
+            return
+        base, h = admin
+        partner, pending = self._pm_state(base, h)
+        if partner is None:
+            raise kit.KitError(f"{self.ref} is not in PM", kit.EXIT_DECISION)
+        r = self.http.get(f"{base}/partners/{self.ref}/policies", headers=h)
+        data = [] if r.status_code == 404 else check(r, f"PM GET /partners/{self.ref}/policies").json()
+        active = data.get("policies") if isinstance(data, dict) else data
+        plan = kit.plan_pm_policies(needed=[self.needed_policy()], active=active or [], pending=pending,
+                                    subject_type=self.a.subject_type)
+        if plan["conflicts"]:
+            raise kit.KitError("; ".join(plan["conflicts"]), kit.EXIT_DECISION)
+        request_ids = list(plan["approve"])
+        for rid in request_ids:
+            info(f"open request {rid} already carries the use-case policy")
+        if plan["request"]:
+            body = kit.policy_request_payload(self.ref, plan["request"], f"{MANAGED_BY}: grant {self.use_case_ref}")
+            rid = check(self.http.post(f"{base}/partners/requests/policy", headers=h, json=body),
+                        "PM policy request").json()["id"]
+            info(f"policy request {rid} raised: {kit.describe_policy(plan['request'][0])}")
+            request_ids.append(rid)
+        for rid in request_ids:
+            if self.a.auto_approve:
+                check(self.http.post(f"{base}/partners/requests/{rid}/approve", headers=h,
+                                     json={"notes": f"approved by {MANAGED_BY} (--auto-approve)"}), "PM approve")
+                info(f"request {rid} approved (--auto-approve)")
             else:
-                raise kit.KitError(conflict, kit.EXIT_DECISION)
-        ids: Dict[str, str] = {}
-        for act in plan["actions"]:
-            c = act["controller"]
-            if act["op"] == "create_binding":
-                r = self.http.post(f"{base}/partners", headers=h, json=kit.binding_payload(self.a.partner, c))
-                ids[c] = check(r, "CM create binding").json()["id"]
-                info(f"{self.a.partner} → {c}: binding {ids[c]} created")
-            elif act["op"] == "activate_binding":
-                check(self.http.patch(f"{base}/partners/{act['binding_id']}", headers=h, json={"status": "active"}),
-                      "CM activate binding")
-                info(f"{self.a.partner} → {c}: binding set active")
-            else:
-                bid = act.get("binding_id") or ids[c]
-                pol = check(self.http.put(f"{base}/partners/{bid}/policy", headers=h, json=act["body"]),
-                            "CM put policy").json()
-                info(f"{self.a.partner} → {c}: policy v{pol.get('version')} {pol.get('status')}")
-                if pol.get("status") == "pending":
-                    pending.append(f"{c}: AWE request {pol.get('awe_request_id')}")
-        if pending:
-            info("the CM sent these policies to AWE for approval (CM AWE approval is on); waiting: "
-                 + "; ".join(pending))
-            self._wait("the CM policies to become active", lambda: self._policies_active(base, h))
-
-    def _policies_active(self, base: str, h: dict) -> bool:
-        bindings = check(self.http.get(f"{base}/partners", headers=h, params={"audience": self.a.partner}),
-                         "CM GET bindings").json()
-        for c in self.controllers:
-            b = next((x for x in bindings if x.get("controller_id") == c), None)
-            if not b:
-                return False
-            versions = check(self.http.get(f"{base}/partners/{b['id']}/policies", headers=h), "CM GET policies").json()
-            if not any(p.get("status") == "active" for p in versions):
-                return False
-        return True
+                info(f"a PM admin must approve request {rid} in the PM portal: {self.u.pm_portal}")
+        self._wait(f"PM to serve {self.ref}'s use-case policy granting {self.use_case_ref}", self._granted)
+        info("granted")
 
     # 5–6. consent and query --------------------------------------------------
     def query(self) -> int:
@@ -383,15 +385,9 @@ class Run:
             return f"not checked (PM serves no kid {kid} for {self.a.composite_id})"
         return kit.verify_response_with_key(body, kit.load_public(key["public_key"])) + f" (PM key {kid})"
 
-    def _cm_setup_hint(self):
-        needed = getattr(self, "cm_unchecked", None)
-        if not needed:
-            return
-        info(f"if the CM has not granted {self.a.partner} access, a CM admin sets up, in {self.u.cm_portal}:")
-        for c, p in needed.items():
-            info(f"  binding {self.a.partner} → {c} (PM partner {self.ref}), active, with a policy allowing "
-                 f"scopes {p['allowed_data_scopes']}, purpose {p['allowed_purposes']}, ID types "
-                 f"{p['allowed_subject_id_types']}, signing {p['allowed_signing_algs']}")
+    def _policy_hint(self):
+        info(f"the partner's use-case policy in PM ({self.u.pm_portal}) must allow: "
+             f"{kit.describe_policy(self.needed_policy())}, signing {kit.SIGNING_ALG}")
 
     def summary(self, status, body) -> int:
         step("6. Result")
@@ -413,14 +409,14 @@ class Run:
         if status != 200 or header.get("status") != "succ":
             err = msg.get("error") or {}
             warn(f"FAILED: {err.get('code')}: {err.get('message')}")
-            if str(err.get("code") or "").startswith("consent"):
-                self._cm_setup_hint()
+            if str(err.get("code") or "").startswith("consent") or err.get("code") == "partner_not_allowed":
+                self._policy_hint()
             return kit.EXIT_CALL_FAILED
         bad = {sid: s for sid, s in sources.items() if s.get("status") not in ("ok", "no_record")}
         if bad:
             warn("FAILED: " + "; ".join(f"{sid} {s.get('status')}" for sid, s in bad.items()))
             if any(s.get("status") == "denied" for s in bad.values()):
-                self._cm_setup_hint()
+                self._policy_hint()
             return kit.EXIT_CALL_FAILED
         info("OK")
         return kit.EXIT_OK
@@ -429,7 +425,8 @@ class Run:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--base-domain", help="e.g. agrix.openg2p.org: every URL defaults to <service>.<base domain>")
-    p.add_argument("--partner", required=True, help="partner ID, e.g. bank-a (must be in the use case's allowed_partners)")
+    p.add_argument("--partner", required=True,
+                   help="partner ID, e.g. bank-a (its use-case policy in PM is set up to grant the use case)")
     p.add_argument("--fan", default=SAMPLE_FAN,
                    help=f"the farmer's ID (FAYDA_FAN by default), as the farmer gives it "
                         f"(default {SAMPLE_FAN}: sample farmer FR-0007 of a demo install)")
@@ -444,9 +441,8 @@ def main(argv=None) -> int:
     p.add_argument("--purpose", help="consent purpose (default: the use case's purpose)")
     p.add_argument("--composite-id", default="agri-composite", help="the composite's partner ID (receiver_id)")
     p.add_argument("--auto-approve", action="store_true",
-                   help="with PM_ADMIN_CLIENT_SECRET: approve the PM request too (no manual step)")
+                   help="with PM_ADMIN_CLIENT_SECRET: approve the PM requests too (no manual step)")
     p.add_argument("--pm-client-id", default="commons-services-staff-portal", help="PM admin client (staff realm)")
-    p.add_argument("--cm-client-id", default="consent-manager", help="CM admin client (staff realm)")
     p.add_argument("--wait", type=int, default=1800, help="seconds to wait for a manual approval (default 1800)")
     p.add_argument("--poll", type=int, default=10, help="seconds between checks while waiting")
     p.add_argument("--new-key", action="store_true", help="generate a new partner key (new kid)")
@@ -454,7 +450,7 @@ def main(argv=None) -> int:
     p.add_argument("--out-dir", default=OUT_DIR, help="where the response JSON is saved (git-ignored)")
     p.add_argument("--print", action="store_true", help="also print the response JSON to stdout")
     p.add_argument("--insecure", action="store_true", help="skip TLS verification")
-    for name in ("composite", "pm-partner", "pm-staff", "pm-portal", "cm", "cm-portal"):
+    for name in ("composite", "pm-partner", "pm-staff", "pm-portal"):
         p.add_argument(f"--{name}-url", help=f"override the {name} URL")
     p.add_argument("--issuer", help="Keycloak staff realm issuer URL (default https://keycloak.<base domain>/realms/staff)")
     a = p.parse_args(argv)

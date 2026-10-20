@@ -9,13 +9,15 @@ import httpx
 import pytest
 import yaml
 from conftest import (
-    AUDIT_URL, CROP_SEASONS, CSR_URL, FAN, FARMER_ID, FARMER_RECORD, FR_URL, PM_URL, SCOPES, canonical, dci_response,
+    AUDIT_URL, CROP_SEASONS, CSR_URL, FAN, FARMER_ID, FARMER_RECORD, FR_URL, PM_URL, SCOPES, PolicyStub, canonical,
+    dci_response, use_case_policy,
 )
 from jwt import PyJWS
 from openg2p_agri_composite.core.audit import AuditEmitter
 from openg2p_agri_composite.core.crypto import build_composite_crypto
 from openg2p_agri_composite.core.engine import CompositeEngine, EngineSettings
 from openg2p_agri_composite.core.loader import UseCaseRegistry
+from openg2p_agri_composite.core.policies import PartnerPolicyStore
 
 REGISTRIES = {
     "farmer-registry": {"url": FR_URL, "partner_id": "", "receiver_id": ""},
@@ -30,8 +32,11 @@ class Harness:
         self.registries = registries
         self.partner_key = partner_key
         self.composite_p12 = composite_p12
+        self.pm = PolicyStub()  # PM policies: PARTNER_BANK_A is granted loan-profile@1
 
         def mux(request: httpx.Request):
+            if self.pm.handles(request):
+                return self.pm(request)
             if str(request.url).startswith(AUDIT_URL):
                 if self.audit_fail:
                     raise httpx.ConnectError("audit down")
@@ -52,6 +57,7 @@ class Harness:
             allowed_algorithms="EdDSA,ES256,RS256",
             pm_transport=pm_transport,
         )
+        self.policies = PartnerPolicyStore(PM_URL, lambda: self.client)
         self.engine = CompositeEngine(
             EngineSettings(composite_partner_id="agri-composite", registries=REGISTRIES,
                            default_overall_timeout_ms=3000),
@@ -59,6 +65,7 @@ class Harness:
             self.crypto,
             lambda: self.client,
             audit=AuditEmitter(AUDIT_URL, lambda: self.client),
+            policies=self.policies,
         )
 
     def consent(self, subject=None, controllers=("farmer-registry", "crop-sown-registry"), key=None, **extra):
@@ -207,9 +214,52 @@ async def test_unknown_partner_fails_closed(h):
 
 
 async def test_partner_not_allowed(h, use_cases_dir, pm_keys, partner_key):
+    # bank-b's key is in PM, but PM has no use-case policy for it (404): fail closed.
     pm_keys["PARTNER_BANK_B"] = pm_keys["PARTNER_BANK_A"]
     status, body = await h.query(h.envelope(sender="bank-b"))
     assert status == 403 and body["message"]["error"]["code"] == "partner_not_allowed"
+    assert "Partner Management" in body["message"]["error"]["message"]
+    assert h.pm.calls[-1] == f"{PM_URL}/policies/PARTNER_BANK_B?data_controller="
+    assert h.registries.calls == []
+    assert h.verify_composite_signature(body)
+
+
+async def test_partner_policy_without_the_use_case(h):
+    # A use-case policy that grants another use case (or another major) does not grant this one.
+    h.pm.policies["PARTNER_BANK_A"] = [use_case_policy(use_cases=["loan-profile@2", "other@1"])]
+    status, body = await h.query(h.envelope())
+    assert status == 403 and body["message"]["error"]["code"] == "partner_not_allowed"
+    assert "loan-profile@1" in body["message"]["error"]["message"]
+
+
+async def test_partner_scope_policy_is_not_a_use_case_grant(h):
+    # Only the use-case policy (data_controller null) counts; a registry scope policy does not.
+    h.pm.policies["PARTNER_BANK_A"] = [use_case_policy(data_controller="farmer-registry",
+                                                       allowed_data_scopes=["farmer-registry.land"],
+                                                       allowed_use_cases=["loan-profile@1"])]
+    status, body = await h.query(h.envelope())
+    assert status == 403 and body["message"]["error"]["code"] == "partner_not_allowed"
+
+
+async def test_partner_grant_is_cached(h):
+    for _ in range(3):
+        status, _ = await h.query(h.envelope())
+        assert status == 200
+    assert len(h.pm.calls) == 1
+
+
+async def test_pm_outage_with_nothing_cached_is_503(h):
+    h.pm.down = True
+    status, body = await h.query(h.envelope())
+    assert status == 503 and body["message"]["error"]["code"] == "partner_policy_unavailable"
+    assert h.registries.calls == []
+    assert h.verify_composite_signature(body)
+
+
+async def test_no_policy_source_fails_closed(h):
+    h.engine.policies = None
+    status, body = await h.query(h.envelope())
+    assert status == 503 and body["message"]["error"]["code"] == "partner_policy_unavailable"
 
 
 async def test_input_validation(h):

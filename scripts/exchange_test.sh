@@ -6,14 +6,14 @@
 # partner's end-to-end test.
 #
 #   1. setup_exchange.py --yes   the composite's signing key, its PM entries in the
-#                                exchange and each department, its CM bindings and
-#                                policies in each department (idempotent: a rerun
-#                                changes nothing that is already in place)
-#   2. admin credentials          PM and CM admin client secrets of the exchange,
-#                                read from the cluster into this process only
+#                                exchange and each department, and its scope policy
+#                                per registry in each department's PM (idempotent: a
+#                                rerun changes nothing that is already in place)
+#   2. admin credentials          the PM admin client secret of the exchange, read
+#                                from the cluster into this process only
 #   3. partner_test.py --auto-approve
-#                                the partner onboarded in PM, bound in the exchange
-#                                CM, a consent and the signed query
+#                                the partner onboarded in the exchange PM with a
+#                                use-case policy, a consent and the signed query
 #
 # Requires: kubectl (current context, or --context), python3 with
 # scripts/requirements.txt installed (or PYTHON=path/to/venv/bin/python).
@@ -95,9 +95,8 @@ if [[ "$TEST" == true ]]; then
     "${KUBECTL[@]}" get secret "$1" -o jsonpath='{.data.client_secret}' | base64 -d
   }
   PM_ADMIN_CLIENT_SECRET="$(secret commons-services-staff-portal)"
-  CM_ADMIN_CLIENT_SECRET="$(secret consent-manager)"
-  export PM_ADMIN_CLIENT_SECRET CM_ADMIN_CLIENT_SECRET
-  echo "   PM and CM admin client secrets read (not shown)" >&2
+  export PM_ADMIN_CLIENT_SECRET
+  echo "   PM admin client secret read (not shown)" >&2
 
   _blue "==> 3. Partner test ($PARTNER at $BASE_DOMAIN)"
   args=(--base-domain "$BASE_DOMAIN" --partner "$PARTNER" --auto-approve)

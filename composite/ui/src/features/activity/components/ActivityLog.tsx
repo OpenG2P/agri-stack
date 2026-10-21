@@ -62,6 +62,7 @@ function ActivityTable({ page }: { page: ActivityPage }) {
                         <th className={thClass}>{t("col_http_status")}</th>
                         <th className={thClass}>{t("col_outcome")}</th>
                         <th className={thClass}>{t("col_reason")}</th>
+                        <th className={thClass}>{t("col_consent")}</th>
                         <th className={`${thClass} text-right`}>{t("col_duration_ms")}</th>
                         <th className={thClass}>{t("sources")}</th>
                     </tr>
@@ -93,6 +94,7 @@ function ActivityTable({ page }: { page: ActivityPage }) {
                                 />
                             </td>
                             <td className={`${tdClass} break-words text-[14px]`}>{item.reason || "—"}</td>
+                            <td className={`${tdClass} break-all font-mono text-[14px]`}>{item.consent_id || "—"}</td>
                             <td className={`${tdClass} text-right font-mono text-[14px]`}>
                                 {item.duration_ms != null ? item.duration_ms.toLocaleString() : "—"}
                             </td>

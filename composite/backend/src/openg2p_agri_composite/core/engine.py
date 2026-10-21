@@ -3,7 +3,8 @@
 Partner → composite: a signed envelope ``{signature, header, message}``.
 Steps: verify the partner's signature (PM key, fail closed) → resolve the use
 case → the partner's use-case grant (PM policy, fail closed) → validate input → rate limit → consent checks (in
-exchange mode, then consent tokens from the exchange Consent Manager) → run the
+exchange mode, then consent tokens from the exchange Consent Manager, which looks the
+consent up when the partner sends none) → run the
 sources as a DAG → partial-response rule → mapping and derived values → sign
 the response. Nothing is stored; logs carry the request ID, use case, partner,
 statuses and timings only.
@@ -125,13 +126,17 @@ class CompositeEngine:
             granted, preset = await self._check_consent(compiled, message, subject, partner_id)
             receipts = None
             if granted is None:
-                # A stored consent (message.consent_id): the exchange CM decides what it grants.
-                receipts, granted, preset = await self._exchange_consent_by_id(
-                    compiled, message, subject, partner_id, request_id)
+                # A consent the exchange CM holds (message.consent_id, or looked up when the
+                # partner sends none): the exchange CM decides what it grants.
+                receipts, granted, preset = await self._exchange_stored_consent(
+                    compiled, message, subject, partner_id, request_id, found)
             elif self.settings.consent_mode == "exchange":
-                receipts, exchange_preset = await self._exchange_consent(compiled, message, subject, granted, request_id)
+                receipts, exchange_preset = await self._exchange_consent(
+                    compiled, message, subject, granted, request_id, found)
                 preset = {**exchange_preset, **preset}
-            self._emit(compiled, "request", request_id, partner_id, "success")
+            consent_used = found.get("consent_id")
+            self._emit(compiled, "request", request_id, partner_id, "success",
+                       context={"consent_id": consent_used} if consent_used else None)
             statuses = await self.run_sources(
                 compiled, subject, parameters, message.get("consent_jws"), partner_id, request_id, granted,
                 receipts=receipts, preset=preset,
@@ -144,6 +149,8 @@ class CompositeEngine:
                 "request_id": request_id,
                 "subject": subject,
             }
+            if consent_used:
+                msg["consent_id"] = consent_used
             if compiled.spec.response.source_status:
                 msg["sources"] = {sid: r.public() for sid, r in statuses.items()}
             msg["data"] = data
@@ -154,6 +161,8 @@ class CompositeEngine:
             msg = {"use_case": compiled.ref if compiled else use_case_ref, "request_id": request_id}
             if subject:
                 msg["subject"] = subject
+            if found.get("consent_id"):
+                msg["consent_id"] = found["consent_id"]
             if e.sources is not None:
                 msg["sources"] = e.sources
             msg["error"] = {"code": e.code, "message": e.message}
@@ -161,7 +170,8 @@ class CompositeEngine:
             outcome = "denied" if http_status in (401, 403) else "failure"
             reason = e.code
             if compiled is not None and not statuses and http_status < 500:
-                self._emit(compiled, "request", request_id, partner_id, outcome, reason)
+                self._emit(compiled, "request", request_id, partner_id, outcome, reason,
+                           {"consent_id": found["consent_id"]} if found.get("consent_id") else None)
             envelope = await self._envelope(partner_id, in_reply_to, msg, status="rjct", reason=(e.code, e.message))
         duration = int((time.monotonic() - started) * 1000)
         _logger.info(
@@ -178,7 +188,8 @@ class CompositeEngine:
             self._emit(
                 compiled, "response", request_id, partner_id, outcome, reason,
                 {"http_status": http_status, "duration_ms": duration,
-                 "sources": {sid: r.status for sid, r in statuses.items()}},
+                 "sources": {sid: r.status for sid, r in statuses.items()},
+                 **({"consent_id": found["consent_id"]} if found.get("consent_id") else {})},
             )
         if self.activity is not None and found.get("authenticated"):
             # Only calls whose signature verified: an unsigned request could otherwise
@@ -188,6 +199,7 @@ class CompositeEngine:
                 partner_id=partner_id,
                 http_status=500 if envelope is None else http_status, outcome=outcome, reason=reason,
                 duration_ms=duration, sources={sid: r.status for sid, r in statuses.items()},
+                consent_id=found.get("consent_id"),
             )
         if envelope is None:  # could not sign
             return 500, {
@@ -318,7 +330,11 @@ class CompositeEngine:
                                  "message.consent_id needs the composite's exchange consent mode")
             return None, {}
         if not consent_jws:
-            raise QueryError(403, "consent_required", f"{compiled.ref} needs the subject's consent (message.consent_jws)")
+            if self.settings.consent_mode == "exchange":
+                # No consent sent: the exchange CM looks up the one it holds (partner, subject, use case).
+                return None, {}
+            raise QueryError(403, "consent_required",
+                             f"{compiled.ref} needs the subject's consent (message.consent_jws)")
         try:
             claims = decode_claims(consent_jws)
         except ConsentError as e:
@@ -342,7 +358,8 @@ class CompositeEngine:
         return granted, preset
 
     async def _exchange_consent(
-        self, compiled: CompiledUseCase, message, subject, granted: Dict[str, bool], request_id: str
+        self, compiled: CompiledUseCase, message, subject, granted: Dict[str, bool], request_id: str,
+        found: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, str], Dict[str, SourceResult]]:
         """Exchange mode: the partner's consent → one consent token per registry.
 
@@ -352,7 +369,8 @@ class CompositeEngine:
         partner ID, a configured token presenter there). Deny → the request
         is denied. Returns ({controller: consent token JWS}, {source_id: preset
         result}) — an optional source whose controller got no token is
-        unavailable; a mandatory one fails the request.
+        unavailable; a mandatory one fails the request. ``found["consent_id"]``: the
+        consent the CM decided on (when it names one).
         """
         if not compiled.spec.consent.required:
             # No consent to exchange: registries get no consent (the partner's
@@ -370,7 +388,7 @@ class CompositeEngine:
             # so each registry returns no other field.
             body["request_context"]["requested_scopes"] = requested_scopes(
                 decode_claims(message["consent_jws"]), compiled.spec.sources)
-        decision = await self._exchange_validate(base, body, request_id)
+        decision = await self._exchange_validate(base, body, request_id, found)
         return self._receipts_and_preset(compiled, decision, granted)
 
     @staticmethod
@@ -382,8 +400,13 @@ class CompositeEngine:
             context["purpose"] = compiled.spec.purpose
         return context
 
-    async def _exchange_validate(self, base: str, body: Dict[str, Any], request_id: str) -> Dict[str, Any]:
-        """POST the exchange CM's /validate; a permit decision, or a QueryError."""
+    async def _exchange_validate(
+        self, base: str, body: Dict[str, Any], request_id: str, found: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """POST the exchange CM's /validate; a permit decision, or a QueryError.
+
+        ``found["consent_id"]``: the consent the CM decided on, when its answer names one
+        (also on a deny, e.g. a revoked consent)."""
         try:
             response = await self._client().post(
                 f"{base}/consent/v1/validate", json=body, timeout=self.settings.exchange_cm_timeout_seconds
@@ -405,6 +428,9 @@ class CompositeEngine:
             decision = None
         if not isinstance(decision, dict):
             raise QueryError(502, "consent_exchange_error", "the exchange Consent Manager answer is not a JSON object")
+        used = decision.get("consent_id")
+        if found is not None and isinstance(used, str) and used:
+            found["consent_id"] = used[:200]
         if decision.get("decision") != "permit":
             reason = decision.get("reason_code") or "denied"
             detail = decision.get("detail")
@@ -442,25 +468,30 @@ class CompositeEngine:
                              "needed by this use case")
         return receipts, preset
 
-    async def _exchange_consent_by_id(
-        self, compiled: CompiledUseCase, message, subject, partner_id: str, request_id: str
+    async def _exchange_stored_consent(
+        self, compiled: CompiledUseCase, message, subject, partner_id: str, request_id: str,
+        found: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, str], Dict[str, bool], Dict[str, SourceResult]]:
-        """A stored consent (message.consent_id) → consent tokens, per-source grant flags, preset results.
+        """A consent the exchange CM holds → consent tokens, per-source grant flags, preset results.
 
-        The exchange CM checks the consent (held by it, given by the subject: active, in its
+        ``message.consent_id`` names it; without one the CM looks it up (the consent this
+        partner holds for this subject and use case, active and valid now; none → deny
+        ``consent_not_found``). The CM checks it (given by the subject, active, in its
         validity, obtained by this partner, about this subject) and answers what it grants per
-        registry (``grants``); the use case's scope rules are then applied to that."""
+        registry (``grants``) and the ``consent_id`` it used; the use case's scope rules are
+        then applied to that."""
         body = {
-            "consent_id": message["consent_id"].strip(),
             "consent_partner_id": partner_id,
             "partner_id": self.settings.composite_partner_id,
             "issue_receipts": True,
             "request_context": self._request_context(compiled, subject),
         }
+        if message.get("consent_id") is not None:
+            body["consent_id"] = message["consent_id"].strip()
         scopes = declared_scopes(compiled.spec.sources)
         if scopes is not None:
             body["request_context"]["requested_scopes"] = scopes
-        decision = await self._exchange_validate(self._exchange_base(), body, request_id)
+        decision = await self._exchange_validate(self._exchange_base(), body, request_id, found)
         raw = decision.get("grants")
         grants = {
             str(c): {str(x) for x in v} for c, v in (raw.items() if isinstance(raw, dict) else []) if isinstance(v, list)

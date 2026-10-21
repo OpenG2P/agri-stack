@@ -483,3 +483,37 @@ def test_partner_test_retries_only_grant_refusals():
     assert not refused(403, {"message": {"error": {"code": "consent_denied", "message": "denied (expired)"}}})
     assert not refused(503, {"message": {"error": {"code": "partner_policy_unavailable"}}})
     assert not refused(200, "not json")
+
+
+def test_partner_test_consent_lookup_sends_no_consent(tmp_path, monkeypatch):
+    run = _partner_run(FakePm(), tmp_path, monkeypatch)
+    run.a.composite_id, run.a.fan = "agri-composite", "123"
+    subject = {"type": "FAYDA_FAN", "value": "123"}
+
+    run.a.consent_lookup, run.a.consent_id = True, None
+    env, how = run._envelope(subject, {})
+    assert "consent_jws" not in env["message"] and "consent_id" not in env["message"]
+    assert "looked up" in how
+
+    run.a.consent_lookup, run.a.consent_id = False, "c-42"
+    env, how = run._envelope(subject, {})
+    assert env["message"]["consent_id"] == "c-42" and "consent_jws" not in env["message"]
+
+
+def test_partner_test_consent_lookup_and_consent_id_exclude_each_other():
+    import partner_test
+
+    with pytest.raises(SystemExit):
+        partner_test.main(["--partner", "bank-a", "--consent-id", "c-1", "--consent-lookup"])
+
+
+def test_partner_consents_flag_is_part_of_coverage():
+    """A test partner that signs its own consents needs allow_partner_consents on its policy."""
+    import partner_kit as kit
+
+    needed = kit.use_case_policy_payload("loan-profile@1", ["credit-assessment"], allow_partner_consents=True)
+    without = dict(needed, allow_partner_consents=False, status="active")
+    assert not kit.policy_covers(without, needed, "FAYDA_FAN")
+    assert kit.policy_covers(dict(needed, status="active"), needed, "FAYDA_FAN")
+    assert kit.merged_policy(without, needed)["allow_partner_consents"] is True
+    assert kit.use_case_policy_payload("loan-profile@1")["allow_partner_consents"] is False

@@ -13,6 +13,8 @@ export interface ActivityItem {
     duration_ms: number | null;
     /** Source id → status ("ok", "unavailable", "denied", "error", ...). */
     sources: Record<string, string> | null;
+    /** The consent used, as the exchange Consent Manager named it (also a looked-up one). */
+    consent_id?: string | null;
 }
 
 /** GET /composite/v1/admin/activity */

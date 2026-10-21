@@ -1,8 +1,9 @@
 """The composite's call log, for the console's Activity page.
 
 One row per authenticated partner query: when, which use case, which partner, the
-HTTP status and outcome, the duration and each source's status. Never the subject,
-the consent or any data. The Audit Manager still gets its events (it is the record
+HTTP status and outcome, the duration, each source's status and the ID of the
+consent used (as the exchange Consent Manager named it). Never the subject, the
+consent's content or any data. The Audit Manager still gets its events (it is the record
 for forensics); this table only exists because the Audit Manager has no read API.
 
 Off when no database is configured. A query never waits on it: ``record`` puts the
@@ -52,6 +53,7 @@ class ActivityRow(_Base):
     reason: Mapped[Optional[str]] = mapped_column(String(200))
     duration_ms: Mapped[int] = mapped_column(Integer)
     sources: Mapped[Dict[str, str]] = mapped_column(JSON, default=dict)
+    consent_id: Mapped[Optional[str]] = mapped_column(String(200))
 
 
 # Added after the first release: created on tables made before it (Postgres).
@@ -60,6 +62,7 @@ _UPGRADES = (
     "CREATE INDEX IF NOT EXISTS ix_composite_activity_use_case_name ON composite_activity (use_case_name)",
     "UPDATE composite_activity SET use_case_name = split_part(use_case, '@', 1) "
     "WHERE use_case_name IS NULL AND use_case IS NOT NULL",
+    "ALTER TABLE composite_activity ADD COLUMN IF NOT EXISTS consent_id VARCHAR(200)",
 )
 
 
@@ -139,6 +142,7 @@ class ActivityStore:
     def record(
         self, *, request_id: str, use_case: Optional[str], partner_id: Optional[str], http_status: int,
         outcome: str, reason: Optional[str], duration_ms: int, sources: Dict[str, str],
+        consent_id: Optional[str] = None,
     ) -> None:
         if not self.enabled or self._queue is None:
             return
@@ -147,6 +151,7 @@ class ActivityStore:
             "use_case": _clip(use_case), "use_case_name": _clip(use_case.split("@", 1)[0]) if use_case else None,
             "partner_id": _clip(partner_id), "http_status": http_status, "outcome": outcome,
             "reason": _clip(reason), "duration_ms": duration_ms, "sources": dict(sources),
+            "consent_id": _clip(consent_id),
         }
         try:
             self._queue.put_nowait(row)
@@ -248,7 +253,7 @@ class ActivityStore:
         items = [
             {"at": _iso(r.at), "request_id": r.request_id, "use_case": r.use_case, "partner_id": r.partner_id,
              "http_status": r.http_status, "outcome": r.outcome, "reason": r.reason, "duration_ms": r.duration_ms,
-             "sources": r.sources or {}}
+             "sources": r.sources or {}, "consent_id": r.consent_id}
             for r in rows
         ]
         return min(total, COUNT_CAP), total > COUNT_CAP, items

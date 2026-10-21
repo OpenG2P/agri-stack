@@ -149,13 +149,16 @@ class QueryMessage(BaseModel):
     consent_id: Optional[str] = Field(
         None,
         description="The ID of a consent the subject gave, held by the Exchange's Consent Manager. "
-        "Send this or `consent_jws`, not both. Needs the Composite's Exchange consent mode.",
+        "Send this or `consent_jws`, not both; send neither to have the Consent Manager look the consent up. "
+        "Needs the Composite's Exchange consent mode.",
         examples=["c0a8012e-5b7d-4f0e-9a43-2f1d6e7b9a10"],
     )
     consent_jws: Optional[str] = Field(
         None,
         description="A consent the partner signed: a compact JWS whose claims name the subject, the purpose, "
-        "a validity and one grant per registry with its data scopes. Send this or `consent_id`, not both.",
+        "a validity and one grant per registry with its data scopes. Send this or `consent_id`, not both. "
+        "With neither (Exchange consent mode only), the Exchange's Consent Manager looks up the consent it holds "
+        "from this partner for this subject and use case (e.g. one collected in the partner portal).",
         examples=["eyJhbGciOiJFUzI1NiIsImtpZCI6ImJhbmstYS1rZXktMSJ9.eyJzdWJqZWN0X2lkIjp7fX0.c2ln"],
     )
 
@@ -205,6 +208,10 @@ class QueryResultMessage(BaseModel):
     version: str = Field(..., description="The use case version that served the query.", examples=["1.0.0"])
     request_id: str = Field(..., description="The Composite's ID for this query (in its logs and audit events).")
     subject: Subject
+    consent_id: Optional[str] = Field(
+        None, description="The consent used, as the Exchange's Consent Manager named it (also a looked-up one).",
+        examples=["c0a8012e-5b7d-4f0e-9a43-2f1d6e7b9a10"],
+    )
     sources: Optional[Dict[str, SourceStatus]] = Field(
         None, description="One status per source, when the use case has `source_status` on.",
     )
@@ -219,6 +226,8 @@ class QueryErrorMessage(BaseModel):
     use_case: str = Field(..., examples=["loan-profile@1"])
     request_id: str
     subject: Optional[Subject] = None
+    consent_id: Optional[str] = Field(
+        None, description="The consent the Exchange's Consent Manager decided on, when it got that far.")
     sources: Optional[Dict[str, SourceStatus]] = Field(
         None, description="Per-source statuses, when the error is a failing source.",
     )
@@ -258,6 +267,17 @@ _REQ_HEADER = {
 _SIG = "eyJhbGciOiJFUzI1NiIsImtpZCI6ImJhbmstYS1rZXktMSJ9..<signature>"
 
 QUERY_REQUEST_EXAMPLES = {
+    "consent_lookup": {
+        "summary": "No consent: the Exchange looks it up (e.g. collected in the partner portal)",
+        "value": {
+            "signature": _SIG,
+            "header": _REQ_HEADER,
+            "message": {
+                "subject": {"type": "FAYDA_FAN", "value": "123456789012"},
+                "parameters": {"crop_year": 2019, "season": "SEASON_MEHER"},
+            },
+        },
+    },
     "consent_id": {
         "summary": "Consent held by the Exchange (consent_id)",
         "value": {
@@ -304,6 +324,7 @@ QUERY_RESPONSE_EXAMPLE = {
         "version": "1.0.0",
         "request_id": "5e0c7b8a-2f41-4d3e-a1b2-c3d4e5f6a7b8",
         "subject": {"type": "FAYDA_FAN", "value": "123456789012"},
+        "consent_id": "c0a8012e-5b7d-4f0e-9a43-2f1d6e7b9a10",
         "sources": {
             "farmer": {"status": "ok"},
             "season_summaries": {"status": "ok"},
@@ -369,7 +390,8 @@ QUERY_RESPONSES: Dict[int | str, Dict[str, Any]] = {
         "Not allowed: `partner_not_allowed` (the partner has no policy for this use case, `name@major`, in "
         "Partner Management), `consent_required`, `consent_malformed`, "
         "`consent_signature_invalid`, `consent_subject_mismatch`, `consent_not_yet_valid`, `consent_expired`, `consent_grant_missing`, "
-        "`consent_scope_missing`, `consent_denied`, `consent_receipt_missing` (no consent token for a mandatory "
+        "`consent_scope_missing`, `consent_denied` (the reason in the message, e.g. `consent_not_found` when no "
+        "consent was sent and none is held), `consent_receipt_missing` (no consent token for a mandatory "
         "registry), `source_denied` (a mandatory source was denied).",
         {
             "partner_not_allowed": error_example(
@@ -377,6 +399,8 @@ QUERY_RESPONSES: Dict[int | str, Dict[str, Any]] = {
                 "partner 'bank-b' is not granted the use case loan-profile@1 in Partner Management"),
             "consent_denied": error_example(
                 "consent_denied", "the exchange Consent Manager denied the consent (consent_expired)"),
+            "consent_not_found": error_example(
+                "consent_denied", "the exchange Consent Manager denied the consent (consent_not_found)"),
         },
     ),
     404: _error_response(

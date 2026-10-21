@@ -93,10 +93,11 @@ async def test_call_log_records_filters_and_purges(store):
     for partner, uc, outcome in [("bank-a", "loan-profile@1", "success"), ("bank-b", "loan-profile@1", "denied"),
                                  ("bank-a", "other@2", "failure")]:
         store.record(request_id="r", use_case=uc, partner_id=partner, http_status=200, outcome=outcome,
-                     reason=None, duration_ms=12, sources={"farmer": "ok"})
+                     reason=None, duration_ms=12, sources={"farmer": "ok"}, consent_id=f"c-{partner}")
     await store.drain()
     total, capped, items = await store.query()
     assert total == 3 and capped is False and items[0]["sources"] == {"farmer": "ok"} and items[0]["at"].endswith("Z")
+    assert {i["consent_id"] for i in items} == {"c-bank-a", "c-bank-b"}
     assert (await store.query(partner="bank-a"))[0] == 2
     assert (await store.query(use_case="loan-profile"))[0] == 2
     assert (await store.query(use_case="other@2", outcome="failure"))[0] == 1

@@ -75,6 +75,7 @@
   "col_http_status": "HTTP",
   "col_outcome": "Outcome",
   "col_reason": "Reason",
+  "col_consent": "Consent",
   "col_duration_ms": "Duration (ms)",
 
   "overview_hint": "How this composite is configured and what it serves. The console is read-only.",

@@ -28,6 +28,9 @@ Steps
                  farmer is --fan, or by default the sample farmer FR-0007 (sample person
                  ETH-IND-0007 of the country pack in openg2p-data, with land and crop
                  seasons in a demo install's Farmer and Crop Sown Registries).
+                 Instead: --consent-id (a consent the Consent Manager holds) or --consent-lookup
+                 (no consent sent; the exchange CM finds the farmer's consent for this partner
+                 and use case, e.g. one collected in the partner portal).
   6. Query       the signed request, POSTed to the composite's public URL; the response
                  signature is checked against the composite's key served by PM.
 
@@ -209,7 +212,10 @@ class Run:
 
     def needed_policy(self) -> dict:
         """The partner's policy for the use case under test (PM PolicyInput)."""
-        return kit.use_case_policy_payload(self.use_case_ref, [self.purpose])
+        # The test signs its own consent unless it uses one the Exchange CM holds
+        # (--consent-id, --consent-lookup): only then must the policy accept it.
+        signs = not (self.a.consent_id or getattr(self.a, "consent_lookup", False))
+        return kit.use_case_policy_payload(self.use_case_ref, [self.purpose], allow_partner_consents=signs)
 
     def _pm_admin(self):
         """(staff API base, headers) with PM admin credentials, or None without them."""
@@ -377,23 +383,8 @@ class Run:
         """Build the consent and the signed request, POST it and save the answer."""
         subject = {"type": self.a.subject_type, "value": self.a.fan}
         params = {k: v for k, v in (("crop_year", self.a.crop_year), ("season", self.a.season)) if v is not None}
-        if self.a.consent_id:
-            # A consent the farmer gave through the Consent Manager (partner portal, verified by staff):
-            # the exchange CM checks it and what it grants; the partner signs only the request.
-            env = kit.build_query_envelope(self.key, partner=self.a.partner, kid=self.kid,
-                                           composite=self.a.composite_id, subject=subject, parameters=params,
-                                           consent_id=self.a.consent_id)
-            info(f"subject {self.a.subject_type} {kit.mask(self.a.fan)}, parameters {params or '{}'}, "
-                 f"stored consent {self.a.consent_id}")
-        else:
-            consent = kit.make_consent(self.key, partner=self.a.partner, kid=self.kid, subject=subject,
-                                       purpose=self.purpose, controllers=self.controllers, valid_days=1,
-                                       scopes=self.scopes)
-            env = kit.build_query_envelope(self.key, partner=self.a.partner, kid=self.kid,
-                                           composite=self.a.composite_id, subject=subject, parameters=params,
-                                           consent_jws=consent)
-            info(f"subject {self.a.subject_type} {kit.mask(self.a.fan)}, parameters {params or '{}'}, "
-                 f"consent grants {self.controllers}")
+        env, consent = self._envelope(subject, params)
+        info(f"subject {self.a.subject_type} {kit.mask(self.a.fan)}, parameters {params or '{}'}, {consent}")
         url = f"{self.u.composite}/composite/v1/use-cases/{self.a.use_case}/query"
         started = time.monotonic()
         r = self.http.post(url, json=env, timeout=90)
@@ -409,6 +400,24 @@ class Run:
         kit._write_private(path, (text + "\n").encode())
         info(f"POST {url} → HTTP {r.status_code} in {elapsed} ms; response saved to {path}")
         return r.status_code, body
+
+    def _envelope(self, subject, params):
+        """(the signed request, how it carries the consent)."""
+        build = dict(key=self.key, partner=self.a.partner, kid=self.kid, composite=self.a.composite_id,
+                     subject=subject, parameters=params)
+        if self.a.consent_lookup:
+            # No consent sent: the exchange CM looks up the one it holds for this partner, farmer
+            # and use case (e.g. collected in the partner portal and verified by staff).
+            return kit.build_query_envelope(**build), "no consent (looked up by the exchange CM)"
+        if self.a.consent_id:
+            # A consent the farmer gave through the Consent Manager (partner portal, verified by staff):
+            # the exchange CM checks it and what it grants; the partner signs only the request.
+            return kit.build_query_envelope(**build, consent_id=self.a.consent_id), \
+                f"stored consent {self.a.consent_id}"
+        consent = kit.make_consent(self.key, partner=self.a.partner, kid=self.kid, subject=subject,
+                                   purpose=self.purpose, controllers=self.controllers, valid_days=1,
+                                   scopes=self.scopes)
+        return kit.build_query_envelope(**build, consent_jws=consent), f"consent grants {self.controllers}"
 
     def _verify(self, body) -> str:
         if not isinstance(body, dict) or "signature" not in body:
@@ -434,6 +443,8 @@ class Run:
         info(f"header.status {header.get('status')}"
              + (f", {header.get('status_reason_code')}: {header.get('status_reason_message')}"
                 if header.get("status_reason_code") else ""))
+        if msg.get("consent_id"):
+            info(f"consent used {msg['consent_id']}")
         sources = msg.get("sources") or {}
         for sid, s in sources.items():
             info(f"source {sid:17} {s.get('status')}" + (f" — {s['detail']}" if s.get("detail") else ""))
@@ -464,10 +475,16 @@ def main(argv=None) -> int:
     p.add_argument("--fan", default=SAMPLE_FAN,
                    help=f"the farmer's ID (FAYDA_FAN by default), as the farmer gives it "
                         f"(default {SAMPLE_FAN}: sample farmer FR-0007 of a demo install)")
-    p.add_argument("--consent-id",
-                   help="query with a consent the farmer gave through the Consent Manager (e.g. collected in the "
-                        "partner portal and verified by staff) instead of a consent this script signs; the "
-                        "composite must be in exchange consent mode, and --fan must be that consent's farmer")
+    consent = p.add_mutually_exclusive_group()
+    consent.add_argument("--consent-id",
+                         help="query with a consent the farmer gave through the Consent Manager (e.g. collected in "
+                              "the partner portal and verified by staff) instead of a consent this script signs; "
+                              "the composite must be in exchange consent mode, and --fan must be that consent's "
+                              "farmer")
+    consent.add_argument("--consent-lookup", action="store_true",
+                         help="query with no consent: the exchange CM looks up the one it holds from this partner "
+                              "for --fan and the use case (e.g. collected in the partner portal); the composite "
+                              "must be in exchange consent mode")
     p.add_argument("--subject-type", default="FAYDA_FAN", choices=kit.SUBJECT_ID_TYPES)
     p.add_argument("--use-case", default="loan-profile")
     p.add_argument("--crop-year", type=int)

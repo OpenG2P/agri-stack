@@ -126,12 +126,15 @@ def onboarding_payload(partner_id: str, label: str, key, kid: str, policies: Opt
     return body
 
 
-def _policy_input(data_controller: Optional[str], use_case: Optional[str], scopes, purposes) -> dict:
-    """PM PolicyInput: exactly one of ``data_controller`` (scope policy) / ``use_case`` (use-case policy)."""
+def _policy_input(data_controller: Optional[str], use_case: Optional[str], scopes, purposes,
+                  allow_partner_consents: bool = False) -> dict:
+    """PM PolicyInput: exactly one of ``data_controller`` (scope policy) / ``use_case`` (use-case policy).
+    ``allow_partner_consents``: the partner may present consents it signs itself (``consent_jws``)."""
     return {"data_controller": data_controller, "use_case": use_case, "allowed_data_scopes": sorted(set(scopes)),
             "allowed_purposes": sorted(set(purposes)),
             "allowed_subject_id_types": list(SUBJECT_ID_TYPES), "allowed_signing_algs": [SIGNING_ALG],
-            "max_validity_duration": POLICY_MAX_VALIDITY, "fetch_type": "oneshot"}
+            "max_validity_duration": POLICY_MAX_VALIDITY, "fetch_type": "oneshot",
+            "allow_partner_consents": allow_partner_consents}
 
 
 def scope_policy_payload(controller: str, purposes=(DEFAULT_PURPOSE,), scopes=None) -> dict:
@@ -139,9 +142,9 @@ def scope_policy_payload(controller: str, purposes=(DEFAULT_PURPOSE,), scopes=No
     return _policy_input(controller, None, GRANTS[controller] if scopes is None else scopes, purposes)
 
 
-def use_case_policy_payload(use_case: str, purposes=(DEFAULT_PURPOSE,)) -> dict:
+def use_case_policy_payload(use_case: str, purposes=(DEFAULT_PURPOSE,), allow_partner_consents: bool = False) -> dict:
     """PM PolicyInput: the policy for one use case (``name@major``); a partner has one per use case."""
-    return _policy_input(None, use_case, [], purposes)
+    return _policy_input(None, use_case, [], purposes, allow_partner_consents)
 
 
 def policy_request_payload(partner_id: str, policies: List[dict], description: str = "",
@@ -364,6 +367,8 @@ def policy_covers(policy: Optional[dict], needed: dict, subject_type: str) -> bo
         return False
     if not set(needed.get("allowed_data_scopes") or []) <= set(policy.get("allowed_data_scopes") or []):
         return False
+    if needed.get("allow_partner_consents") and not policy.get("allow_partner_consents"):
+        return False
     for field, values in (("allowed_purposes", needed["allowed_purposes"]),
                           ("allowed_subject_id_types", [subject_type]),
                           ("allowed_signing_algs", [SIGNING_ALG])):
@@ -381,6 +386,7 @@ def merged_policy(active: Optional[dict], needed: dict) -> dict:
     out = dict(needed)
     for field in ("allowed_data_scopes", "allowed_purposes", "allowed_subject_id_types", "allowed_signing_algs"):
         out[field] = sorted(set(needed.get(field) or []) | set(active.get(field) or []))
+    out["allow_partner_consents"] = bool(needed.get("allow_partner_consents") or active.get("allow_partner_consents"))
     old, new = duration_days(active.get("max_validity_duration")), duration_days(needed.get("max_validity_duration"))
     if active.get("max_validity_duration") and old is not None and new is not None and old > new:
         out["max_validity_duration"] = active["max_validity_duration"]

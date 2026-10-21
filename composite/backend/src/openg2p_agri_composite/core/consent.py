@@ -9,6 +9,10 @@ separately, against the partner's PM key). Claims (contract §1)::
 A legacy consent with ``data_controller`` + ``data_scopes`` is one grant. The
 composite only checks what it needs to decide whom to call; CM remains the
 authority (each registry validates its own grant).
+
+A consent the exchange Consent Manager holds (``message.consent_id``, or looked
+up when the partner sends no consent) is never seen here: the CM checks it and
+answers its grants, and ``scope_gaps_for`` applies the use case's scope rules.
 """
 
 import base64

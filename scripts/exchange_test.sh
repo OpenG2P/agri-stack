@@ -14,6 +14,10 @@
 #   3. partner_test.py --auto-approve
 #                                the partner onboarded in the exchange PM with a
 #                                policy for the use case, a consent and the signed query
+#   4. partner portal user        <partner>-operator in the CM's partner realm, so the
+#                                same partner can log in to the partner portal; its
+#                                password is kept in Secret partner-user-<partner>-operator
+#                                (consent-manager's setup-partner-realm.sh; idempotent)
 #
 # Requires: kubectl (current context, or --context), python3 with
 # scripts/requirements.txt installed (or PYTHON=path/to/venv/bin/python).
@@ -22,7 +26,7 @@
 #   ./exchange_test.sh [--namespace agrix] [--base-domain agrix.openg2p.org]
 #                      [--registry farmer-registry=trial] [--registry crop-sown-registry=dept1]
 #                      [--partner bank-a] [--use-case loan-profile] [--fan <ID>]
-#                      [--consent-id <ID>] [--context <ctx>]
+#                      [--consent-id <ID> | --consent-lookup] [--context <ctx>] [--no-portal-user]
 #                      [--setup-only] [--test-only] [--dry-run]
 #
 #   --registry      repeatable; default farmer-registry=trial and crop-sown-registry=dept1
@@ -31,7 +35,11 @@
 #   --fan           the farmer's ID (default: the sample farmer of a demo install)
 #   --consent-id    query with a consent collected in the partner portal; it must have
 #                   been made for the same use case (and --fan must be its farmer)
-#   --setup-only    only step 1;  --test-only  only steps 2-3
+#   --consent-lookup  query with no consent: the exchange CM finds the farmer's (--fan)
+#                   consent for the partner and use case, e.g. collected in the partner portal
+#   --setup-only    only step 1;  --test-only  only steps 2-4
+#   --no-portal-user  skip step 4. Its script is taken from a consent-manager checkout
+#                   next to agri-stack, or from $PARTNER_REALM_SCRIPT
 #   --dry-run       step 1 as a dry run (no writes) and stop
 #
 # The whole run is also written to scripts/out/exchange-test-<namespace>-<time>.log
@@ -47,15 +55,17 @@ PARTNER="bank-a"
 USE_CASE=""
 FAN=""
 CONSENT_ID=""
+CONSENT_LOOKUP=false
 CONTEXT=""
 REGISTRIES=()
 SETUP=true
 TEST=true
 DRY_RUN=false
+PORTAL_USER=true
 PYTHON="${PYTHON:-python3}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-usage() { sed -n '2,41p' "$0"; exit 1; }
+usage() { sed -n '2,49p' "$0"; exit 1; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -66,14 +76,19 @@ while [[ $# -gt 0 ]]; do
     --use-case)     USE_CASE="$2"; shift 2 ;;
     --fan)          FAN="$2"; shift 2 ;;
     --consent-id)   CONSENT_ID="$2"; shift 2 ;;
+    --consent-lookup) CONSENT_LOOKUP=true; shift ;;
     --context)      CONTEXT="$2"; shift 2 ;;
     --setup-only)   TEST=false; shift ;;
     --test-only)    SETUP=false; shift ;;
     --dry-run)      DRY_RUN=true; TEST=false; shift ;;
+    --no-portal-user) PORTAL_USER=false; shift ;;
     -h|--help)      usage ;;
     *) echo "Unknown argument: $1"; usage ;;
   esac
 done
+if [[ -n "$CONSENT_ID" && "$CONSENT_LOOKUP" == true ]]; then
+  echo "--consent-id and --consent-lookup: pass one" >&2; exit 1
+fi
 BASE_DOMAIN="${BASE_DOMAIN:-$NAMESPACE.openg2p.org}"
 [[ ${#REGISTRIES[@]} -eq 0 ]] && REGISTRIES=("farmer-registry=trial" "crop-sown-registry=dept1")
 
@@ -112,5 +127,22 @@ if [[ "$TEST" == true ]]; then
   [[ -n "$USE_CASE" ]] && args+=(--use-case "$USE_CASE")
   [[ -n "$FAN" ]] && args+=(--fan "$FAN")
   [[ -n "$CONSENT_ID" ]] && args+=(--consent-id "$CONSENT_ID")
-  "$PYTHON" "$HERE/partner_test.py" "${args[@]}"
+  [[ "$CONSENT_LOOKUP" == true ]] && args+=(--consent-lookup)
+  rc=0; "$PYTHON" "$HERE/partner_test.py" "${args[@]}" || rc=$?
+
+  if [[ "$PORTAL_USER" == true ]]; then
+    _blue "==> 4. Partner portal user ($PARTNER-operator)"
+    REALM_SCRIPT="${PARTNER_REALM_SCRIPT:-$HERE/../../consent-manager/deployment/scripts/setup-partner-realm.sh}"
+    if [[ ! -x "$REALM_SCRIPT" ]]; then
+      echo "   ! $REALM_SCRIPT not found: check out consent-manager next to agri-stack, set PARTNER_REALM_SCRIPT, or pass --no-portal-user" >&2
+    elif [[ -n "$CONTEXT" ]]; then
+      echo "   ! setup-partner-realm.sh uses the current kubectl context; switch to $CONTEXT and run:" >&2
+      echo "     $REALM_SCRIPT --namespace $NAMESPACE --user $PARTNER-operator:$PARTNER:PARTNER_OPERATOR" >&2
+    else
+      "$REALM_SCRIPT" --namespace "$NAMESPACE" --user "$PARTNER-operator:$PARTNER:PARTNER_OPERATOR"
+      echo "   portal    https://consent-partner-portal.$BASE_DOMAIN  (user $PARTNER-operator)" >&2
+      echo "   password  kubectl -n $NAMESPACE get secret partner-user-$PARTNER-operator -o jsonpath='{.data.password}' | base64 -d" >&2
+    fi
+  fi
+  exit "$rc"
 fi

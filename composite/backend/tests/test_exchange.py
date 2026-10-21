@@ -248,3 +248,71 @@ async def test_consent_id_denied_by_the_cm(x):
     status, body = await x.query(x.envelope(consent=None, consent_id="c-123"))
     assert status == 403 and body["message"]["error"]["code"] == "consent_denied"
     assert "revoked" in body["message"]["error"]["message"]
+
+
+# ── no consent sent: the exchange CM looks it up ─────────────────────────────
+
+def lookup_response(consent_id="c-found", **kw):
+    inner = by_id_response(**kw)
+
+    def respond(body):
+        r = inner(body)
+        return httpx.Response(200, json={**r.json(), "consent_id": consent_id})
+    return respond
+
+
+async def test_no_consent_is_looked_up_at_the_exchange_cm(x):
+    x.cm.response = lookup_response()
+    env = x.envelope(consent=None)
+    status, body = await x.query(env)
+    assert status == 200, body
+    _url, req = x.cm.calls[0]
+    assert "consent_id" not in req and "consent_jws" not in req
+    assert req["consent_partner_id"] == "bank-a" and req["partner_id"] == "agri-composite"
+    assert req["issue_receipts"] is True
+    ctx = req["request_context"]
+    assert ctx["subject_id"] == env["message"]["subject"]
+    assert ctx["use_case"] == "loan-profile@1" and ctx["purpose"] == "credit-assessment"
+    assert ctx["requested_scopes"] == sorted(s for v in SCOPES.values() for s in v)
+    assert [authorize(c)["consent_jws"] for c in x.registries.calls_to(FR_URL)] == ["fr.receipt.jws"]
+    # the consent used is named in the (signed) response and the audit events
+    assert body["message"]["consent_id"] == "c-found" and x.verify_composite_signature(body)
+    by_kind = {e["type"].rsplit(".", 1)[-1]: e["data"]["context"] for e in x.audit_events}
+    assert by_kind["request"]["consent_id"] == "c-found" and by_kind["response"]["consent_id"] == "c-found"
+
+
+async def test_no_consent_found_is_denied(x):
+    x.cm.response = lambda body: httpx.Response(
+        200, json={"decision": "deny", "reason_code": "consent_not_found", "detail": "no active consent"})
+    status, body = await x.query(x.envelope(consent=None))
+    assert status == 403
+    err = body["message"]["error"]
+    assert err["code"] == "consent_denied" and "consent_not_found" in err["message"]
+    assert "consent_id" not in body["message"]
+    assert x.registries.calls == []
+
+
+async def test_a_denied_consent_is_named_in_the_error(x):
+    x.cm.response = lambda body: httpx.Response(
+        200, json={"decision": "deny", "reason_code": "revoked", "consent_id": "c-old"})
+    status, body = await x.query(x.envelope(consent=None))
+    assert status == 403 and body["message"]["consent_id"] == "c-old"
+
+
+async def test_no_consent_in_passthrough_mode_is_still_refused(x):
+    x.engine.settings.consent_mode = "passthrough"
+    status, body = await x.query(x.envelope(consent=None))
+    assert status == 403 and body["message"]["error"]["code"] == "consent_required"
+    assert x.cm.calls == []
+
+
+async def test_consent_jws_names_the_consent_the_cm_used(x):
+    x.cm.response = lambda body: httpx.Response(
+        200, json={"decision": "permit", "receipts": dict(RECEIPTS), "consent_id": "c-jws"})
+    status, body = await x.query(x.envelope())
+    assert status == 200 and body["message"]["consent_id"] == "c-jws"
+
+
+async def test_no_consent_id_in_the_response_when_the_cm_names_none(x):
+    status, body = await x.query(x.envelope())
+    assert status == 200 and "consent_id" not in body["message"]

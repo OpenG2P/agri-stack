@@ -145,7 +145,7 @@
           "Use cases"
         ],
         "summary": "Query a use case",
-        "description": "Serve one query for one subject. The body is a signed envelope `{signature, header, message}`: `signature` is a detached JWS over `{header, message}` made with the partner's key and verified against Partner Management (`header.sender_id`). The Composite checks that the partner has a policy for the use case (`name@major`) in Partner Management, and the subject's consent (`message.consent_id`, or `message.consent_jws`), queries each registry the use case names, and returns one response envelope signed with its own key.\n\nEach source gets a status: `ok`, `no_record`, `denied`, `unavailable` or `error`. A failing optional source leaves its fields null (the response is still 200); a failing mandatory source fails the request (`source_denied`, `source_unavailable`, `source_error`).\n\nEvery answer, errors included, is a signed envelope: on an error `header.status` is `rjct` and `message.error` has the `code` and `message`.",
+        "description": "Serve one query for one subject. The body is a signed envelope `{signature, header, message}`: `signature` is a detached JWS over `{header, message}` made with the partner's key and verified against Partner Management (`header.sender_id`). The Composite checks that the partner has a policy for the use case (`name@major`) in Partner Management, and the subject's consent (`message.consent_id`, `message.consent_jws`, or neither: the Exchange's Consent Manager then looks up the consent it holds from this partner for this subject and use case), queries each registry the use case names, and returns one response envelope signed with its own key.\n\nEach source gets a status: `ok`, `no_record`, `denied`, `unavailable` or `error`. A failing optional source leaves its fields null (the response is still 200); a failing mandatory source fails the request (`source_denied`, `source_unavailable`, `source_error`).\n\nEvery answer, errors included, is a signed envelope: on an error `header.status` is `rjct` and `message.error` has the `code` and `message`.",
         "operationId": "query_composite_v1_use_cases__use_case__query_post",
         "parameters": [
           {
@@ -208,6 +208,7 @@
                       "type": "FAYDA_FAN",
                       "value": "123456789012"
                     },
+                    "consent_id": "c0a8012e-5b7d-4f0e-9a43-2f1d6e7b9a10",
                     "sources": {
                       "farmer": {
                         "status": "ok"
@@ -417,7 +418,7 @@
             }
           },
           "403": {
-            "description": "Not allowed: `partner_not_allowed` (the partner has no policy for this use case, `name@major`, in Partner Management), `consent_required`, `consent_malformed`, `consent_signature_invalid`, `consent_subject_mismatch`, `consent_not_yet_valid`, `consent_expired`, `consent_grant_missing`, `consent_scope_missing`, `consent_denied`, `consent_receipt_missing` (no consent token for a mandatory registry), `source_denied` (a mandatory source was denied).",
+            "description": "Not allowed: `partner_not_allowed` (the partner has no policy for this use case, `name@major`, in Partner Management), `consent_required`, `consent_malformed`, `consent_signature_invalid`, `consent_subject_mismatch`, `consent_not_yet_valid`, `consent_expired`, `consent_grant_missing`, `consent_scope_missing`, `consent_denied` (the reason in the message, e.g. `consent_not_found` when no consent was sent and none is held), `consent_receipt_missing` (no consent token for a mandatory registry), `source_denied` (a mandatory source was denied).",
             "content": {
               "application/json": {
                 "examples": {
@@ -473,6 +474,34 @@
                         "error": {
                           "code": "consent_denied",
                           "message": "the exchange Consent Manager denied the consent (consent_expired)"
+                        }
+                      }
+                    }
+                  },
+                  "consent_not_found": {
+                    "summary": "consent_not_found",
+                    "value": {
+                      "signature": "eyJhbGciOiJFUzI1NiIsImtpZCI6ImFncmktY29tcG9zaXRlIn0..<signature>",
+                      "header": {
+                        "version": "1.0.0",
+                        "message_id": "0b6d1d0e-9e55-4d7a-8b3c-1f2e3d4c5b6a",
+                        "message_ts": "2026-10-01T10:00:01.234Z",
+                        "action": "on-query",
+                        "status": "rjct",
+                        "sender_id": "agri-composite",
+                        "receiver_id": "bank-a",
+                        "meta": {
+                          "in_reply_to": "7f1c2a9e-3a51-4c0e-9d5b-0f6f3f2b1c11"
+                        },
+                        "status_reason_code": "consent_denied",
+                        "status_reason_message": "the exchange Consent Manager denied the consent (consent_not_found)"
+                      },
+                      "message": {
+                        "use_case": "loan-profile@1",
+                        "request_id": "5e0c7b8a-2f41-4d3e-a1b2-c3d4e5f6a7b8",
+                        "error": {
+                          "code": "consent_denied",
+                          "message": "the exchange Consent Manager denied the consent (consent_not_found)"
                         }
                       }
                     }
@@ -872,7 +901,7 @@
                             "type": "null"
                           }
                         ],
-                        "description": "The ID of a consent the subject gave, held by the Exchange's Consent Manager. Send this or `consent_jws`, not both. Needs the Composite's Exchange consent mode.",
+                        "description": "The ID of a consent the subject gave, held by the Exchange's Consent Manager. Send this or `consent_jws`, not both; send neither to have the Consent Manager look the consent up. Needs the Composite's Exchange consent mode.",
                         "examples": [
                           "c0a8012e-5b7d-4f0e-9a43-2f1d6e7b9a10"
                         ],
@@ -887,7 +916,7 @@
                             "type": "null"
                           }
                         ],
-                        "description": "A consent the partner signed: a compact JWS whose claims name the subject, the purpose, a validity and one grant per registry with its data scopes. Send this or `consent_id`, not both.",
+                        "description": "A consent the partner signed: a compact JWS whose claims name the subject, the purpose, a validity and one grant per registry with its data scopes. Send this or `consent_id`, not both. With neither (Exchange consent mode only), the Exchange's Consent Manager looks up the consent it holds from this partner for this subject and use case (e.g. one collected in the partner portal).",
                         "examples": [
                           "eyJhbGciOiJFUzI1NiIsImtpZCI6ImJhbmstYS1rZXktMSJ9.eyJzdWJqZWN0X2lkIjp7fX0.c2ln"
                         ],
@@ -910,6 +939,30 @@
                 "type": "object"
               },
               "examples": {
+                "consent_lookup": {
+                  "summary": "No consent: the Exchange looks it up (e.g. collected in the partner portal)",
+                  "value": {
+                    "signature": "eyJhbGciOiJFUzI1NiIsImtpZCI6ImJhbmstYS1rZXktMSJ9..<signature>",
+                    "header": {
+                      "version": "1.0.0",
+                      "message_id": "7f1c2a9e-3a51-4c0e-9d5b-0f6f3f2b1c11",
+                      "message_ts": "2026-10-01T10:00:00Z",
+                      "action": "query",
+                      "sender_id": "bank-a",
+                      "receiver_id": "agri-composite"
+                    },
+                    "message": {
+                      "subject": {
+                        "type": "FAYDA_FAN",
+                        "value": "123456789012"
+                      },
+                      "parameters": {
+                        "crop_year": 2019,
+                        "season": "SEASON_MEHER"
+                      }
+                    }
+                  }
+                },
                 "consent_id": {
                   "summary": "Consent held by the Exchange (consent_id)",
                   "value": {
@@ -1663,6 +1716,18 @@
               }
             ]
           },
+          "consent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consent Id",
+            "description": "The consent the Exchange's Consent Manager decided on, when it got that far."
+          },
           "sources": {
             "anyOf": [
               {
@@ -1760,6 +1825,21 @@
           },
           "subject": {
             "$ref": "#/components/schemas/Subject"
+          },
+          "consent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consent Id",
+            "description": "The consent used, as the Exchange's Consent Manager named it (also a looked-up one).",
+            "examples": [
+              "c0a8012e-5b7d-4f0e-9a43-2f1d6e7b9a10"
+            ]
           },
           "sources": {
             "anyOf": [

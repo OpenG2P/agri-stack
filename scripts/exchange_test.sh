@@ -13,7 +13,7 @@
 #                                from the cluster into this process only
 #   3. partner_test.py --auto-approve
 #                                the partner onboarded in the exchange PM with a
-#                                use-case policy, a consent and the signed query
+#                                policy for the use case, a consent and the signed query
 #
 # Requires: kubectl (current context, or --context), python3 with
 # scripts/requirements.txt installed (or PYTHON=path/to/venv/bin/python).

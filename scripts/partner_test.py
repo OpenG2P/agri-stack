@@ -12,17 +12,18 @@ Steps
   1. Use case    GET the use case from the composite (name@major, purpose, inputs, consent grants needed).
   2. Key         the partner's signing key (EC P-256), kept in --state-dir and reused.
   3. Onboard     the partner in the exchange's Partner Management (PM): its key, and its
-                 use-case policy granting the use case under test (name@major) in the same
-                 onboarding request.
+                 policy for the use case under test (name@major) in the same onboarding
+                 request (a partner has one policy per use case).
                    with PM admin credentials: raise the onboarding (or key-update) request,
                    then wait for a PM admin to approve it in the PM portal; --auto-approve
                    approves it with the same credentials (no manual step);
                    without them: print the partner ID, public key and policy for a PM admin
                    to onboard and approve, then wait.
                  Either way, the script waits until PM's public key API serves the key.
-  4. Access      the partner's use-case policy in PM grants the use case: an already onboarded
-                 partner without it gets a PM policy request (approved as in 3; the policy is
-                 widened, never narrowed). The script waits until PM's policy API serves it.
+  4. Access      the partner's policy for the use case in PM: an already onboarded partner
+                 without it gets a PM policy request adding it (approved as in 3; an existing
+                 policy is widened, never narrowed; other use cases' policies are untouched).
+                 The script waits until PM's policy API serves it.
   5. Consent     a consent for the farmer with a grant per registry, signed by the partner. The
                  farmer is --fan, or by default the sample farmer FR-0007 (sample person
                  ETH-IND-0007 of the country pack in openg2p-data, with land and crop
@@ -207,8 +208,8 @@ class Run:
         info(f"{self.a.partner} ({self.ref}): kid {self.kid}" + (" (new, saved)" if new else ""))
 
     def needed_policy(self) -> dict:
-        """The partner's use-case policy for this test (PM PolicyInput)."""
-        return kit.use_case_policy_payload([self.use_case_ref], [self.purpose])
+        """The partner's policy for the use case under test (PM PolicyInput)."""
+        return kit.use_case_policy_payload(self.use_case_ref, [self.purpose])
 
     def _pm_admin(self):
         """(staff API base, headers) with PM admin credentials, or None without them."""
@@ -227,8 +228,8 @@ class Run:
         return partner, pending
 
     def _granted(self) -> bool:
-        """PM's policy API serves a use-case policy for the partner that covers the test."""
-        r = self.http.get(f"{self.u.pm_partner}/policies/{self.ref}", params={"data_controller": ""})
+        """PM's policy API serves the partner's policy for this use case, and it covers the test."""
+        r = self.http.get(f"{self.u.pm_partner}/policies/{self.ref}", params={"use_case": self.use_case_ref})
         if r.status_code == 404:
             return False
         served = check(r, f"PM GET /policies/{self.ref}").json().get("policies") or []
@@ -265,7 +266,7 @@ class Run:
                                    json=kit.onboarding_payload(self.a.partner, label, self.key, self.kid,
                                                                [self.needed_policy()]))
                 request_id = check(r, "PM onboarding request").json()["id"]
-                info(f"onboarding request {request_id} raised, with the use-case policy granting {self.use_case_ref}")
+                info(f"onboarding request {request_id} raised, with the policy for {self.use_case_ref}")
             else:  # key_update
                 body = {"partner_id": self.ref, "description": f"{MANAGED_BY}: key {self.kid}",
                         "keys": kit.onboarding_payload(self.a.partner, label, self.key, self.kid)["keys"]}
@@ -301,7 +302,7 @@ class Run:
     def access(self):
         step(f"4. Use-case grant for {self.a.partner} in Partner Management ({self.use_case_ref})")
         if self._granted():
-            info(f"PM serves {self.ref}'s use-case policy granting {self.use_case_ref}: nothing to do")
+            info(f"PM serves {self.ref}'s policy for {self.use_case_ref}: nothing to do")
             return
         admin = self._pm_admin()
         if not admin:
@@ -309,7 +310,7 @@ class Run:
                  f"request for {self.ref} in {self.u.pm_portal}:")
             info(f"  {kit.describe_policy(self.needed_policy())}")
             self.changed = True
-            self._wait(f"PM to serve {self.ref}'s use-case policy granting {self.use_case_ref}", self._granted)
+            self._wait(f"PM to serve {self.ref}'s policy for {self.use_case_ref}", self._granted)
             info("granted")
             return
         base, h = admin
@@ -326,7 +327,7 @@ class Run:
         request_ids = list(plan["approve"])
         self.changed = True
         for rid in request_ids:
-            info(f"open request {rid} already carries the use-case policy")
+            info(f"open request {rid} already carries the policy for {self.use_case_ref}")
         if plan["request"]:
             body = kit.policy_request_payload(self.ref, plan["request"], f"{MANAGED_BY}: grant {self.use_case_ref}")
             rid = check(self.http.post(f"{base}/partners/requests/policy", headers=h, json=body),
@@ -340,7 +341,7 @@ class Run:
                 info(f"request {rid} approved (--auto-approve)")
             else:
                 info(f"a PM admin must approve request {rid} in the PM portal: {self.u.pm_portal}")
-        self._wait(f"PM to serve {self.ref}'s use-case policy granting {self.use_case_ref}", self._granted)
+        self._wait(f"PM to serve {self.ref}'s policy for {self.use_case_ref}", self._granted)
         info("granted")
 
     # 5–6. consent and query --------------------------------------------------
@@ -419,7 +420,7 @@ class Run:
         return kit.verify_response_with_key(body, kit.load_public(key["public_key"])) + f" (PM key {kid})"
 
     def _policy_hint(self):
-        info(f"the partner's use-case policy in PM ({self.u.pm_portal}) must allow: "
+        info(f"the partner's policy for {self.use_case_ref} in PM ({self.u.pm_portal}) must allow: "
              f"{kit.describe_policy(self.needed_policy())}, signing {kit.SIGNING_ALG}")
 
     def summary(self, status, body) -> int:
@@ -459,7 +460,7 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--base-domain", help="e.g. agrix.openg2p.org: every URL defaults to <service>.<base domain>")
     p.add_argument("--partner", required=True,
-                   help="partner ID, e.g. bank-a (its use-case policy in PM is set up to grant the use case)")
+                   help="partner ID, e.g. bank-a (its policy for the use case in PM is set up if absent)")
     p.add_argument("--fan", default=SAMPLE_FAN,
                    help=f"the farmer's ID (FAYDA_FAN by default), as the farmer gives it "
                         f"(default {SAMPLE_FAN}: sample farmer FR-0007 of a demo install)")

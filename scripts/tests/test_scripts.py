@@ -92,7 +92,7 @@ def test_composite_p12_round_trip():
 
 def test_payloads(partner_key):
     pol = kit.scope_policy_payload("crop-sown-registry", ["credit-assessment"])
-    assert pol["data_controller"] == "crop-sown-registry" and pol["allowed_use_cases"] == []
+    assert pol["data_controller"] == "crop-sown-registry" and pol["use_case"] is None
     assert pol["allowed_data_scopes"] == sorted(["crop-sown-registry.farmer_reference", "crop-sown-registry.crop_season",
                                                  "crop-sown-registry.measures", "crop-sown-registry.location"])
     # Scope IDs are namespaced by the registry they belong to.
@@ -101,10 +101,14 @@ def test_payloads(partner_key):
     # farmer record: the Farmer Registry grant must carry it.
     assert "farmer-registry.farmer_identifiers" in kit.GRANTS["farmer-registry"]
     assert "FAYDA_FAN" in pol["allowed_subject_id_types"] and pol["allowed_signing_algs"] == ["ES256"]
-    # A use-case policy: no data controller, no scopes, the use cases (name@major).
-    uc = kit.use_case_policy_payload(["loan-profile@1"], ["credit-assessment"])
+    # A use-case policy: one use case (name@major), no data controller, no scopes.
+    uc = kit.use_case_policy_payload("loan-profile@1", ["credit-assessment"])
     assert uc["data_controller"] is None and uc["allowed_data_scopes"] == []
-    assert uc["allowed_use_cases"] == ["loan-profile@1"] and uc["allowed_purposes"] == ["credit-assessment"]
+    assert uc["use_case"] == "loan-profile@1" and uc["allowed_purposes"] == ["credit-assessment"]
+    assert "allowed_use_cases" not in uc
+    req = kit.policy_request_payload("test-bank", [], revoke=[uc, pol])
+    assert req["revoke"] == [{"use_case": "loan-profile@1"}, {"data_controller": "crop-sown-registry"}]
+    assert "revoke" not in kit.policy_request_payload("test-bank", [uc])
     # The onboarding request carries policies only when given; the policy request names the PM partner.
     assert "policies" not in kit.onboarding_payload("test-bank", "T", partner_key, "k1")
     onboard = kit.onboarding_payload("test-bank", "T", partner_key, "k1", [uc])
@@ -208,7 +212,7 @@ def test_secret_manifest_holds_values_only_as_base64():
 # ── PM policy plan ───────────────────────────────────────────────────────────
 
 NEEDED = {c: kit.scope_policy_payload(c) for c in kit.GRANTS}
-USE_CASE = kit.use_case_policy_payload(["loan-profile@1"])
+USE_CASE = kit.use_case_policy_payload("loan-profile@1")
 
 
 def _policy(controller, **kw):
@@ -245,17 +249,19 @@ def test_wrong_purpose_needs_a_wider_policy():
     assert set(p["request"][0]["allowed_purposes"]) == {"other", "credit-assessment"}
 
 
-def test_a_scope_policy_does_not_count_as_the_use_case_policy():
-    # Policies are per data controller: the use-case policy (null) is separate from scope policies.
-    p = _plan([USE_CASE], active=[_policy("farmer-registry", allowed_use_cases=["loan-profile@1"])])
+def test_a_scope_policy_does_not_count_as_a_use_case_policy():
+    p = _plan([USE_CASE], active=[_policy("farmer-registry")])
     assert p["request"] == [USE_CASE]
 
 
-def test_use_case_policy_is_widened_with_other_use_cases_kept():
-    p = _plan([USE_CASE], active=[_policy(None, allowed_use_cases=["insurance@1"])])
-    assert p["request"][0]["allowed_use_cases"] == ["insurance@1", "loan-profile@1"]
-    assert p["request"][0]["data_controller"] is None
-    assert _plan([USE_CASE], active=[_policy(None, allowed_use_cases=["insurance@1", "loan-profile@1"])])["ok"] == [None]
+def test_one_policy_per_use_case():
+    # Another use case's policy neither covers this one nor is widened: this use case gets its own.
+    p = _plan([USE_CASE], active=[_policy(None, use_case="insurance@1")])
+    assert p["request"] == [USE_CASE]
+    assert _plan([USE_CASE], active=[_policy(None, use_case="insurance@1"), _policy(None)])["ok"] == ["loan-profile@1"]
+    # This use case's policy with another purpose is widened (never narrowed).
+    (req,) = _plan([USE_CASE], active=[_policy(None, allowed_purposes=["other"])])["request"]
+    assert req["use_case"] == "loan-profile@1" and set(req["allowed_purposes"]) == {"other", "credit-assessment"}
 
 
 def test_open_request_that_covers_is_approved_not_resubmitted():
@@ -347,7 +353,7 @@ def test_needed_policies_from_published_use_cases():
     out = setup.needed_policies(use_cases, ["farmer-registry", "crop-sown-registry", "other-registry"])
     # The composite's ceiling: a PM scope policy per registry.
     assert out["farmer-registry"]["data_controller"] == "farmer-registry"
-    assert out["farmer-registry"]["allowed_use_cases"] == []
+    assert out["farmer-registry"]["use_case"] is None
     assert out["farmer-registry"]["allowed_data_scopes"] == [
         "farmer-registry.land", "farmer-registry.main_crops", "farmer-registry.personal_details"]
     assert out["farmer-registry"]["allowed_purposes"] == ["credit-assessment", "insurance"]
@@ -400,7 +406,8 @@ class FakePm:
         if path.startswith("/keys/"):
             return httpx.Response(200, json={"keys": self.keys}) if self.keys else httpx.Response(404)
         if path.startswith("/policies/"):
-            found = [p for p in self.policies if not p.get("data_controller")]
+            use_case = request.url.params.get("use_case")
+            found = [p for p in self.policies if not p.get("data_controller") and p.get("use_case") == use_case]
             return httpx.Response(200, json={"policies": found}) if found and self.partner else httpx.Response(404)
         if path == "/partners/requests" and method == "GET":
             return httpx.Response(200, json={"requests": []})
@@ -413,7 +420,7 @@ class FakePm:
             self.partner = {"status": "active"}
             self.keys += req.get("keys") or []
             for p in req.get("policies") or []:
-                self.policies = [x for x in self.policies if x.get("data_controller") != p["data_controller"]]
+                self.policies = [x for x in self.policies if kit.policy_key(x) != kit.policy_key(p)]
                 self.policies.append({**p, "status": "active", "version": 2})
             return httpx.Response(200, json={})
         if path.endswith("/policies"):
@@ -446,21 +453,23 @@ def test_partner_test_onboards_with_the_use_case_policy(tmp_path, monkeypatch):
     run.onboard()
     path, body = next(p for p in pm.posts if p[0] == "/partners/requests/onboarding")
     assert body["partner_id"] == "PARTNER_TEST_BANK"
-    assert body["policies"] == [kit.use_case_policy_payload(["loan-profile@1"], ["credit-assessment"])]
+    assert body["policies"] == [kit.use_case_policy_payload("loan-profile@1", ["credit-assessment"])]
     run.access()  # granted by the onboarding: no policy request
     assert not any(p[0] == "/partners/requests/policy" for p in pm.posts)
 
 
-def test_partner_test_raises_a_policy_request_for_an_onboarded_partner(tmp_path, monkeypatch):
-    pm = FakePm(partner={"status": "active"},
-                policies=[{**kit.use_case_policy_payload(["insurance@1"]), "status": "active", "version": 1}])
+def test_partner_test_adds_the_use_case_policy_for_an_onboarded_partner(tmp_path, monkeypatch):
+    other = {**kit.use_case_policy_payload("insurance@1"), "status": "active", "version": 1}
+    pm = FakePm(partner={"status": "active"}, policies=[other])
     run = _partner_run(pm, tmp_path, monkeypatch)
     run.access()
     path, body = next(p for p in pm.posts if p[0] == "/partners/requests/policy")
     assert body["partner_id"] == "PARTNER_TEST_BANK"
-    (pol,) = body["policies"]
-    assert pol["data_controller"] is None and pol["allowed_use_cases"] == ["insurance@1", "loan-profile@1"]
+    # Only this use case's own policy is added; the other use case's policy is untouched.
+    assert body["policies"] == [kit.use_case_policy_payload("loan-profile@1", ["credit-assessment"])]
+    assert "revoke" not in body
     assert any(p[0].endswith("/approve") for p in pm.posts)
+    assert other in pm.policies
 
 
 def test_partner_test_retries_only_grant_refusals():

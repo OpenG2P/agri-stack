@@ -107,11 +107,11 @@ def pm_transport(pm_keys):
     return httpx.MockTransport(handler)
 
 
-def use_case_policy(partner_id="PARTNER_BANK_A", use_cases=("loan-profile@1",), version=1, **extra):
-    """A PM use-case policy (data_controller null), as PM's policy API returns it."""
+def use_case_policy(partner_id="PARTNER_BANK_A", use_case="loan-profile@1", version=1, **extra):
+    """A PM use-case policy (one per partner and use case), as PM's policy API returns it."""
     return {
-        "id": str(uuid.uuid4()), "partner_id": partner_id, "data_controller": None, "version": version,
-        "status": "active", "allowed_data_scopes": [], "allowed_use_cases": list(use_cases),
+        "id": str(uuid.uuid4()), "partner_id": partner_id, "data_controller": None, "use_case": use_case,
+        "version": version, "status": "active", "allowed_data_scopes": [],
         "allowed_purposes": [], "allowed_subject_id_types": [], "allowed_signing_algs": ["EdDSA", "ES256"],
         "max_validity_duration": None, "fetch_type": "oneshot", "max_fetch_frequency": None, "data_life": None,
         "effective_from": "2026-10-01T00:00:00+00:00", **extra,
@@ -119,7 +119,7 @@ def use_case_policy(partner_id="PARTNER_BANK_A", use_cases=("loan-profile@1",), 
 
 
 class PolicyStub:
-    """PM's internal policy API: GET /policies/{partner_id}?data_controller= and GET /policies?use_case=."""
+    """PM's internal policy API: GET /policies/{partner_id}?use_case= (or ?data_controller=) and GET /policies?use_case=."""
 
     def __init__(self):
         self.policies = {"PARTNER_BANK_A": [use_case_policy()]}  # PM partner ID -> active policies
@@ -140,13 +140,14 @@ class PolicyStub:
         if path == "/policies":
             use_case = params.get("use_case")
             found = [p for items in self.policies.values() for p in items
-                     if not p["data_controller"] and use_case in p["allowed_use_cases"]]
+                     if not p["data_controller"] and p.get("use_case") == use_case]
             return httpx.Response(200, json={"policies": found}, headers=headers)
         partner = path.rsplit("/", 1)[-1]
         found = self.policies.get(partner, [])
         if "data_controller" in params:
-            dc = params["data_controller"] or None
-            found = [p for p in found if p["data_controller"] == dc]
+            found = [p for p in found if p["data_controller"] == params["data_controller"]]
+        if "use_case" in params:
+            found = [p for p in found if not p["data_controller"] and p.get("use_case") == params["use_case"]]
         if not found:
             return httpx.Response(404, json={"error": {"code": "PM-POLICY-404", "message": "no active policy"}})
         return httpx.Response(200, json={"partner_id": partner, "policies": found}, headers=headers)

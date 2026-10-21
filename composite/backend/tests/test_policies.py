@@ -37,7 +37,9 @@ async def test_grant_and_partner_reference(pm, clock):
     store = make_store(pm, clock)
     assert await store.granted("bank-a", "loan-profile@1") is True
     assert await store.granted("bank-a", "loan-profile@2") is False
-    assert pm.calls == [f"{PM_URL}/policies/PARTNER_BANK_A?data_controller="]  # one call: cached
+    assert await store.granted("bank-a", "loan-profile@1") is True
+    assert pm.calls == [f"{PM_URL}/policies/PARTNER_BANK_A?use_case=loan-profile%401",
+                        f"{PM_URL}/policies/PARTNER_BANK_A?use_case=loan-profile%402"]  # cached per use case
 
 
 async def test_soft_ttl_is_bounded_by_cache_control(pm, clock):
@@ -48,7 +50,7 @@ async def test_soft_ttl_is_bounded_by_cache_control(pm, clock):
     await store.granted("bank-a", "loan-profile@1")
     assert len(pm.calls) == 1
     clock.now += 2  # past PM's max-age (5s), before the configured 60s
-    pm.policies["PARTNER_BANK_A"] = [use_case_policy(use_cases=["other@1"], version=2)]
+    pm.policies["PARTNER_BANK_A"] = [use_case_policy(use_case="other@1")]
     assert await store.granted("bank-a", "loan-profile@1") is False  # the revocation is seen
     assert len(pm.calls) == 2
 
@@ -126,7 +128,7 @@ async def test_single_flight(clock):
 
 
 async def test_listing_by_use_case(pm, clock):
-    pm.policies["PARTNER_BANK_B"] = [use_case_policy("PARTNER_BANK_B", use_cases=["other@1"])]
+    pm.policies["PARTNER_BANK_B"] = [use_case_policy("PARTNER_BANK_B", use_case="other@1")]
     store = make_store(pm, clock)
     found = await store.list_for_use_case("loan-profile@1")
     assert [p["partner_id"] for p in found] == ["PARTNER_BANK_A"]
@@ -134,3 +136,17 @@ async def test_listing_by_use_case(pm, clock):
     pm.down = True
     with pytest.raises(PolicyUnavailable):
         await store.list_for_use_case("loan-profile@1")
+
+
+async def test_a_policy_for_another_use_case_does_not_grant(pm, clock):
+    # One policy per use case: a scope policy or another use case's policy is not this grant.
+    pm.policies["PARTNER_BANK_A"] = [
+        use_case_policy(use_case="other@1"),
+        use_case_policy(data_controller="farmer-registry", use_case=None, allowed_data_scopes=["farmer-registry.land"]),
+    ]
+    store = make_store(pm, clock)
+    assert await store.granted("bank-a", "loan-profile@1") is False
+    assert await store.granted("bank-a", "other@1") is True
+    store.invalidate("bank-a")
+    assert await store.granted("bank-a", "other@1") is True
+    assert len(pm.calls) == 3

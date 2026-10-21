@@ -19,8 +19,8 @@
 # Template note: keep a space between consecutive braces ("} }", "{ {") so
 # literal JSON never reads as a Jinja "{{ … }}".
 #
-# Who may call it is not set here: a partner's use-case policy in Partner Management
-# grants it (allowed_use_cases: [loan-profile@1]).
+# Who may call it is not set here: a partner needs a policy for it in Partner
+# Management (use_case: loan-profile@1; one policy per use case).
 
 use_case: loan-profile
 version: 1.0.0

@@ -237,7 +237,7 @@ class CompositeEngine:
         return compiled, {"type": subject["type"], "value": subject["value"].strip()}
 
     async def _check_grant(self, sender: str, compiled: CompiledUseCase):
-        """The sender's use-case policy in Partner Management must grant ``name@major`` (fail closed)."""
+        """The sender must have a Partner Management policy for this use case (``name@major``; fail closed)."""
         if self.policies is None:
             raise QueryError(503, "partner_policy_unavailable",
                              "the Composite has no Partner Management policy source configured")
@@ -376,7 +376,7 @@ class CompositeEngine:
     @staticmethod
     def _request_context(compiled: CompiledUseCase, subject) -> Dict[str, Any]:
         """The exchange CM's request context: the subject, and the use case (``name@major``) and its
-        purpose, so the CM applies the consenting partner's use-case policy in Partner Management."""
+        purpose, so the CM applies the consenting partner's policy for this use case in Partner Management."""
         context: Dict[str, Any] = {"subject_id": subject, "use_case": compiled.ref}
         if compiled.spec.purpose:
             context["purpose"] = compiled.spec.purpose

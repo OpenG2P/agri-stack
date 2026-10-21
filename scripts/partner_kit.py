@@ -16,9 +16,9 @@ partner ID (e.g. ``bank-a``); Partner Management holds its key and its policies
 under ``PARTNER_<ID>`` upper-cased with '-' → '_' (e.g. ``PARTNER_BANK_A``), which
 is where the composite, the Consent Managers and the registries look them up.
 
-Policies (in Partner Management, raised and approved as PM requests): a partner's
-**use-case policy** (no data controller) grants use cases (``name@major``) at the
-exchange; a **scope policy** per data controller grants a registry's data scopes.
+Policies (in Partner Management, raised and approved as PM requests): a partner has
+one **use-case policy** per use case it may call at the exchange (``use_case`` =
+``name@major``), and one **scope policy** per data controller for a registry's data scopes.
 """
 
 import argparse
@@ -126,28 +126,35 @@ def onboarding_payload(partner_id: str, label: str, key, kid: str, policies: Opt
     return body
 
 
-def _policy_input(data_controller: Optional[str], scopes, use_cases, purposes) -> dict:
-    return {"data_controller": data_controller, "allowed_data_scopes": sorted(set(scopes)),
-            "allowed_use_cases": sorted(set(use_cases)), "allowed_purposes": sorted(set(purposes)),
+def _policy_input(data_controller: Optional[str], use_case: Optional[str], scopes, purposes) -> dict:
+    """PM PolicyInput: exactly one of ``data_controller`` (scope policy) / ``use_case`` (use-case policy)."""
+    return {"data_controller": data_controller, "use_case": use_case, "allowed_data_scopes": sorted(set(scopes)),
+            "allowed_purposes": sorted(set(purposes)),
             "allowed_subject_id_types": list(SUBJECT_ID_TYPES), "allowed_signing_algs": [SIGNING_ALG],
             "max_validity_duration": POLICY_MAX_VALIDITY, "fetch_type": "oneshot"}
 
 
 def scope_policy_payload(controller: str, purposes=(DEFAULT_PURPOSE,), scopes=None) -> dict:
     """PM PolicyInput: a scope policy for one registry (scopes: default GRANTS[controller])."""
-    return _policy_input(controller, GRANTS[controller] if scopes is None else scopes, [], purposes)
+    return _policy_input(controller, None, GRANTS[controller] if scopes is None else scopes, purposes)
 
 
-def use_case_policy_payload(use_cases, purposes=(DEFAULT_PURPOSE,)) -> dict:
-    """PM PolicyInput: a use-case policy (no data controller) granting use cases (``name@major``)."""
-    return _policy_input(None, [], use_cases, purposes)
+def use_case_policy_payload(use_case: str, purposes=(DEFAULT_PURPOSE,)) -> dict:
+    """PM PolicyInput: the policy for one use case (``name@major``); a partner has one per use case."""
+    return _policy_input(None, use_case, [], purposes)
 
 
-def policy_request_payload(partner_id: str, policies: List[dict], description: str = "") -> dict:
-    """PM staff API body for POST /partners/requests/policy (``partner_id``: the DCI partner ID or PM ID)."""
+def policy_request_payload(partner_id: str, policies: List[dict], description: str = "",
+                           revoke: Optional[List[dict]] = None) -> dict:
+    """PM staff API body for POST /partners/requests/policy (``partner_id``: the DCI partner ID or PM ID).
+
+    revoke: policies to revoke, each by its key (see ``revoke_entry``)."""
     ref = partner_id if partner_id.startswith("PARTNER_") else pm_reference(partner_id)
-    return {"partner_id": ref, "description": description or f"{MANAGED_BY}: policies",
+    body = {"partner_id": ref, "description": description or f"{MANAGED_BY}: policies",
             "policies": [dict(p) for p in policies]}
+    if revoke:
+        body["revoke"] = [revoke_entry(p) for p in revoke]
+    return body
 
 
 def make_consent(key, *, partner: str, kid: str, subject: dict, purpose: str = DEFAULT_PURPOSE,
@@ -353,11 +360,10 @@ def policy_covers(policy: Optional[dict], needed: dict, subject_type: str) -> bo
     """The (active) policy allows everything ``needed`` (a PolicyInput) asks for."""
     if not policy or policy.get("status", "active") != "active":
         return False
-    if (policy.get("data_controller") or None) != (needed.get("data_controller") or None):
+    if policy_key(policy) != policy_key(needed):
         return False
-    for field in ("allowed_data_scopes", "allowed_use_cases"):
-        if not set(needed.get(field) or []) <= set(policy.get(field) or []):
-            return False
+    if not set(needed.get("allowed_data_scopes") or []) <= set(policy.get("allowed_data_scopes") or []):
+        return False
     for field, values in (("allowed_purposes", needed["allowed_purposes"]),
                           ("allowed_subject_id_types", [subject_type]),
                           ("allowed_signing_algs", [SIGNING_ALG])):
@@ -373,8 +379,7 @@ def merged_policy(active: Optional[dict], needed: dict) -> dict:
     if not active:
         return dict(needed)
     out = dict(needed)
-    for field in ("allowed_data_scopes", "allowed_use_cases", "allowed_purposes", "allowed_subject_id_types",
-                  "allowed_signing_algs"):
+    for field in ("allowed_data_scopes", "allowed_purposes", "allowed_subject_id_types", "allowed_signing_algs"):
         out[field] = sorted(set(needed.get(field) or []) | set(active.get(field) or []))
     old, new = duration_days(active.get("max_validity_duration")), duration_days(needed.get("max_validity_duration"))
     if active.get("max_validity_duration") and old is not None and new is not None and old > new:
@@ -382,33 +387,45 @@ def merged_policy(active: Optional[dict], needed: dict) -> dict:
     return out
 
 
-def policy_label(data_controller: Optional[str]) -> str:
-    return f"scope policy {data_controller}" if data_controller else "use-case policy"
+def policy_key(policy: dict) -> tuple:
+    """What a PM policy is keyed by: ("data_controller", X) for a scope policy, ("use_case", name@major)."""
+    if policy.get("data_controller"):
+        return ("data_controller", policy["data_controller"])
+    return ("use_case", policy.get("use_case") or None)
+
+
+def policy_label(policy: dict) -> str:
+    field, value = policy_key(policy)
+    return f"scope policy {value}" if field == "data_controller" else f"use-case policy {value}"
+
+
+def revoke_entry(policy: dict) -> dict:
+    """An item of a PM policy request's ``revoke`` list: {"data_controller": X} or {"use_case": name@major}."""
+    field, value = policy_key(policy)
+    return {field: value}
 
 
 def plan_pm_policies(*, needed: List[dict], active: List[dict], pending: List[dict],
                      subject_type: str = "FAYDA_FAN") -> dict:
-    """The PM policies a partner still needs: one PolicyInput per data controller in ``needed``
-    (``data_controller`` null = the use-case policy).
+    """The PM policies a partner still needs: one PolicyInput per policy in ``needed`` (keyed by
+    ``data_controller`` for a scope policy, ``use_case`` for a use-case policy: one per use case).
 
     active: the partner's active policies (staff GET /partners/{id}/policies); pending: its open
     requests (status 'created'), whose ``proposed_policies`` may already carry what is needed.
     Returns {"request": [PolicyInput to raise in one policy request (widened by the active
     policy, never narrowed)], "approve": [open request IDs that carry it], "ok": [data
-    controllers already covered], "conflicts": [str]}.
+    controllers / use cases already covered], "conflicts": [str]}.
     """
     request, approve, ok, conflicts = [], [], [], []
     for body in needed:
-        dc = body.get("data_controller") or None
-        current = next((p for p in active if (p.get("data_controller") or None) == dc
-                        and p.get("status", "active") == "active"), None)
+        key = policy_key(body)
+        current = next((p for p in active if policy_key(p) == key and p.get("status", "active") == "active"), None)
         if policy_covers(current, body, subject_type):
-            ok.append(dc)
+            ok.append(key[1])
             continue
         open_req = proposal = None
         for r in pending:
-            proposal = next((p for p in r.get("proposed_policies") or [] if (p.get("data_controller") or None) == dc),
-                            None)
+            proposal = next((p for p in r.get("proposed_policies") or [] if policy_key(p) == key), None)
             if proposal is not None:
                 open_req = r
                 break
@@ -417,7 +434,7 @@ def plan_pm_policies(*, needed: List[dict], active: List[dict], pending: List[di
                 if open_req["id"] not in approve:
                     approve.append(open_req["id"])
             else:
-                conflicts.append(f"{policy_label(dc)}: open {open_req.get('request_type')} request {open_req['id']} "
+                conflicts.append(f"{policy_label(body)}: open {open_req.get('request_type')} request {open_req['id']} "
                                  "proposes a policy that does not cover what is needed; approve or reject it in "
                                  "Partner Management, then rerun")
             continue
@@ -439,9 +456,8 @@ def describe_pm_action(ref: str, action: dict, kid: str) -> str:
 
 
 def describe_policy(policy: dict) -> str:
-    what = (f"use cases {policy['allowed_use_cases']}" if not policy.get("data_controller")
-            else f"scopes {policy['allowed_data_scopes']}")
-    return (f"{policy_label(policy.get('data_controller'))}: {what}, purposes {policy['allowed_purposes']}, "
+    what = f"scopes {policy['allowed_data_scopes']}, " if policy.get("data_controller") else ""
+    return (f"{policy_label(policy)}: {what}purposes {policy['allowed_purposes']}, "
             f"id types {policy['allowed_subject_id_types']}")
 
 
@@ -489,10 +505,10 @@ def cmd_keys(a):
     print(f"Wrote {partner_key_path}, {p12_path} (password '{a.p12_password}'), composite.pub.pem, kit.json in {a.out}\n")
     print("1. Partner Management (the exchange's) — onboard both, then approve each request")
     print("   (POST {pm-staff-portal-api}/partners/requests/onboarding, then POST /partners/requests/{id}/approve,")
-    print("    as a client with PM's partner_manager role). The partner's request carries its use-case policy")
-    print("   (the use cases it may call, name@major):\n")
+    print("    as a client with PM's partner_manager role). The partner's request carries one policy per use")
+    print("   case it may call (name@major); add another use case later with a policy request:\n")
     print(json.dumps(onboarding_payload(a.partner, f"TEST {a.partner}", partner, a.partner_kid,
-                                        [use_case_policy_payload([a.use_case], [a.purpose])]), indent=2))
+                                        [use_case_policy_payload(a.use_case, [a.purpose])]), indent=2))
     print(json.dumps(onboarding_payload(a.composite, "Agri Stack composite", composite, a.composite_kid), indent=2))
     print("\n2. The composite's signing key Secret (namespace of the composite):\n")
     print(f"   kubectl -n <ns> create secret generic agri-composite-signing \\\n"

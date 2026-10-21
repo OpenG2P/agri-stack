@@ -33,8 +33,8 @@ Steps
   5. Apply      after a typed "yes" (or --yes): the PM requests (raised and approved), the Secret
                 and a restart of the composite.
 
-Partners (e.g. a bank) are not set up here: they onboard in the exchange's PM with a
-use-case policy, as scripts/partner_test.py shows.
+Partners (e.g. a bank) are not set up here: they onboard in the exchange's PM with one
+policy per use case they may call, as scripts/partner_test.py shows.
 
 Exit codes: 0 ok, 1 error, 2 a decision is needed (consent-token trust, an open PM request that
 does not fit, a key conflict, writes not confirmed).

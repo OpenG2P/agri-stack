@@ -214,29 +214,28 @@ async def test_unknown_partner_fails_closed(h):
 
 
 async def test_partner_not_allowed(h, use_cases_dir, pm_keys, partner_key):
-    # bank-b's key is in PM, but PM has no use-case policy for it (404): fail closed.
+    # bank-b's key is in PM, but PM has no policy for it and this use case (404): fail closed.
     pm_keys["PARTNER_BANK_B"] = pm_keys["PARTNER_BANK_A"]
     status, body = await h.query(h.envelope(sender="bank-b"))
     assert status == 403 and body["message"]["error"]["code"] == "partner_not_allowed"
     assert "Partner Management" in body["message"]["error"]["message"]
-    assert h.pm.calls[-1] == f"{PM_URL}/policies/PARTNER_BANK_B?data_controller="
+    assert h.pm.calls[-1] == f"{PM_URL}/policies/PARTNER_BANK_B?use_case=loan-profile%401"
     assert h.registries.calls == []
     assert h.verify_composite_signature(body)
 
 
 async def test_partner_policy_without_the_use_case(h):
-    # A use-case policy that grants another use case (or another major) does not grant this one.
-    h.pm.policies["PARTNER_BANK_A"] = [use_case_policy(use_cases=["loan-profile@2", "other@1"])]
+    # Policies for other use cases (or another major) do not grant this one.
+    h.pm.policies["PARTNER_BANK_A"] = [use_case_policy(use_case="loan-profile@2"), use_case_policy(use_case="other@1")]
     status, body = await h.query(h.envelope())
     assert status == 403 and body["message"]["error"]["code"] == "partner_not_allowed"
     assert "loan-profile@1" in body["message"]["error"]["message"]
 
 
 async def test_partner_scope_policy_is_not_a_use_case_grant(h):
-    # Only the use-case policy (data_controller null) counts; a registry scope policy does not.
-    h.pm.policies["PARTNER_BANK_A"] = [use_case_policy(data_controller="farmer-registry",
-                                                       allowed_data_scopes=["farmer-registry.land"],
-                                                       allowed_use_cases=["loan-profile@1"])]
+    # Only a use-case policy counts; a registry scope policy does not.
+    h.pm.policies["PARTNER_BANK_A"] = [use_case_policy(data_controller="farmer-registry", use_case=None,
+                                                       allowed_data_scopes=["farmer-registry.land"])]
     status, body = await h.query(h.envelope())
     assert status == 403 and body["message"]["error"]["code"] == "partner_not_allowed"
 

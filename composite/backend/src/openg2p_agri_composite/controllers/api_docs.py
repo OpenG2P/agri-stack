@@ -366,8 +366,8 @@ QUERY_RESPONSES: Dict[int | str, Dict[str, Any]] = {
             "signature_invalid", "the request signature does not verify against the sender's Partner Management key")},
     ),
     403: _error_response(
-        "Not allowed: `partner_not_allowed` (the partner's use-case policy in Partner Management does not grant "
-        "this use case, `name@major`, or the partner has none), `consent_required`, `consent_malformed`, "
+        "Not allowed: `partner_not_allowed` (the partner has no policy for this use case, `name@major`, in "
+        "Partner Management), `consent_required`, `consent_malformed`, "
         "`consent_signature_invalid`, `consent_subject_mismatch`, `consent_not_yet_valid`, `consent_expired`, `consent_grant_missing`, "
         "`consent_scope_missing`, `consent_denied`, `consent_receipt_missing` (no consent token for a mandatory "
         "registry), `source_denied` (a mandatory source was denied).",

@@ -42,11 +42,6 @@ export default function PartnerListView() {
             header: t("col_granted_use_cases"),
             render: (p) => <ChipList items={p.use_cases} mono hrefOf={toUseCaseHref} />,
         },
-        {
-            key: "policy_version",
-            header: t("col_policy_version"),
-            render: (p) => <span className="font-mono text-[13px]">{p.policy_version ?? "—"}</span>,
-        },
         { key: "pm_keys", header: t("col_pm_keys"), render: (p) => <PmKeys partner={p} /> },
     ];
 
@@ -57,7 +52,7 @@ export default function PartnerListView() {
                 hint={t("partners_hint")}
                 actions={<PortalLinks links={query.data?.links} />}
             />
-            <QueryView query={query} loading={<TableSkeleton columns={4} rows={4} />}>
+            <QueryView query={query} loading={<TableSkeleton columns={3} rows={4} />}>
                 {(data) => (
                     <>
                         {data.pm_error ? (

@@ -68,9 +68,9 @@ class AdminController(BaseController):
              "The registry's data scope catalogue (each scope's current version and fields) and the use-case "
              "sources that ask for each scope. Cached; `refresh=true` fetches it again.", _NOT_FOUND),
             ("/partners", self.list_partners, "List partners",
-             "Partners whose use-case policy in Partner Management grants a published use case: the "
-             "use cases granted, the policy version, and the keys Partner Management serves for each (key "
-             "ID and algorithm). `pm_error` is set when Partner Management cannot be read.", {}),
+             "Partners with a Partner Management policy for a published use case (one policy per use "
+             "case): the use cases granted and the keys Partner Management serves for each (key ID and "
+             "algorithm). `pm_error` is set when Partner Management cannot be read.", {}),
             ("/activity", self.list_activity, "List calls",
              "The call log, newest first: use case, partner, HTTP status, outcome, reason, duration and "
              "per-source statuses. No request or response data is stored. `total` stops at 10000 "
@@ -116,11 +116,11 @@ class AdminController(BaseController):
 
     @staticmethod
     def _partners(grants: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
-        """{PM partner ID: {"use_cases": [...], "policy_version": n}} from the use-case grants."""
+        """{PM partner ID: {"use_cases": [...]}} from the use-case policies."""
         out: Dict[str, Dict[str, Any]] = {}
         for ref, policies in grants.items():
             for p in policies:
-                entry = out.setdefault(str(p["partner_id"]), {"use_cases": [], "policy_version": p.get("version")})
+                entry = out.setdefault(str(p["partner_id"]), {"use_cases": []})
                 if ref not in entry["use_cases"]:
                     entry["use_cases"].append(ref)
         return dict(sorted(out.items()))
@@ -235,14 +235,14 @@ class AdminController(BaseController):
 
     @require_permissions(VIEW)
     async def list_partners(self):
-        """Partners granted published use cases in PM (use-case policies), with the keys PM serves for them."""
+        """Partners with PM policies for published use cases, with the keys PM serves for them."""
         grants, error = await self._grants(self.service.registry.published())
         partners = self._partners(grants)
         keys = await asyncio.gather(*(self.service.partner_keys(p) for p in partners))
         out = []
         for (partner, entry), (served, key_error) in zip(partners.items(), keys):
-            out.append({"partner_id": partner, "use_cases": entry["use_cases"],
-                        "policy_version": entry["policy_version"], "pm_keys": served, "pm_error": key_error})
+            out.append({"partner_id": partner, "use_cases": entry["use_cases"], "pm_keys": served,
+                        "pm_error": key_error})
         return {"partners": out, "pm_error": error, "links": self._links()}
 
     @require_permissions(VIEW)

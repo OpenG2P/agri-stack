@@ -97,8 +97,8 @@ login with the `composite:view` permission; present only when the console is on.
     partner_key_refresh_cooldown_seconds: int = 10
     partner_key_fetch_timeout_seconds: float = 3.0
 
-    # Partner use-case grants: each partner's use-case policy in Partner Management
-    # (GET /policies/PARTNER_<SENDER>?data_controller=), cached per pod. Soft TTL:
+    # Partner use-case grants: one policy per (partner, use case) in Partner Management
+    # (GET /policies/PARTNER_<SENDER>?use_case=<name@major>), cached per pod. Soft TTL:
     # refreshed after min(this, PM's Cache-Control max-age) — how long a revoked grant
     # may still work. Hard TTL: the last answer is used this long while PM is down,
     # then calls fail (503). Negative TTL: "no grant" (404) is cached this long.

@@ -246,10 +246,10 @@ async def test_admin_partners_and_activity(admin, h, store):
     from conftest import use_case_policy
 
     # Partners come from PM use-case policies (a partner granted only other use cases is not listed).
-    h.pm.policies["PARTNER_BANK_C"] = [use_case_policy("PARTNER_BANK_C", use_cases=["other@1"])]
+    h.pm.policies["PARTNER_BANK_C"] = [use_case_policy("PARTNER_BANK_C", use_case="other@1")]
     lst = await admin.list_partners()
     assert lst["pm_error"] is None
-    assert lst["partners"] == [{"partner_id": "PARTNER_BANK_A", "use_cases": ["loan-profile@1"], "policy_version": 1,
+    assert lst["partners"] == [{"partner_id": "PARTNER_BANK_A", "use_cases": ["loan-profile@1"],
                                 "pm_keys": [{"kid": "k1", "algorithm": "ES256"}], "pm_error": None}]
     await h.query(h.envelope())
     await store.drain()

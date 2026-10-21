@@ -1,27 +1,26 @@
 """Partner policies from Partner Management (PM): which use cases a partner may call.
 
-A partner's use-case grant is its PM **use-case policy** (``data_controller`` null):
-``GET {partner_mgmt_api_url}/policies/PARTNER_<SENDER>?data_controller=`` answers the
-active policy of an active partner, or 404 (unknown or inactive partner, no such
-policy: one answer for every case). The use case ``name@major`` must be in its
-``allowed_use_cases``.
+A partner has one PM **use-case policy** per use case it may call (``use_case`` =
+``name@major``): ``GET {partner_mgmt_api_url}/policies/PARTNER_<SENDER>?use_case=<name@major>``
+answers that active policy of an active partner, or 404 (unknown or inactive partner,
+no such policy: one answer for every case). 404 = not granted.
 
-Cached per pod, as partner keys are:
+Cached per pod per (partner, use case), as partner keys are:
 
 * Soft TTL — refresh after min(configured, the answer's ``Cache-Control: max-age``):
   bounds how long a revoked grant keeps working.
 * Hard TTL — PM unreachable: the last answer is used up to this age (WARNING), then
   ``PolicyUnavailable`` (the request fails with 503, never "allowed").
 * Negative TTL — a 404 (no grant) is remembered briefly.
-* Refresh cooldown — at most one PM call per partner per cooldown while PM fails.
-* Single-flight — concurrent misses for one partner make one call.
+* Refresh cooldown — at most one PM call per (partner, use case) per cooldown while PM fails.
+* Single-flight — concurrent misses for one (partner, use case) make one call.
 """
 
 import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -36,7 +35,7 @@ class PolicyUnavailable(Exception):
 
 @dataclass
 class _Entry:
-    policy: Optional[Dict[str, Any]]  # None: PM has no use-case policy for the partner (404)
+    policy: Optional[Dict[str, Any]]  # None: PM has no policy for this partner and use case (404)
     known: bool  # False: PM failed and nothing was known (an outage marker)
     fetched_at: float
     last_attempt: float
@@ -60,8 +59,10 @@ def _policies(data: Any) -> List[Dict[str, Any]]:
     return [p for p in (items if isinstance(items, list) else []) if isinstance(p, dict)]
 
 
-def _is_use_case_policy(policy: Dict[str, Any]) -> bool:
-    return not policy.get("data_controller") and policy.get("status", "active") == "active"
+def _is_policy_for(policy: Dict[str, Any], use_case_ref: str) -> bool:
+    """An active use-case policy (no ``data_controller``) for ``use_case_ref``."""
+    return (not policy.get("data_controller") and policy.get("use_case") == use_case_ref
+            and policy.get("status", "active") == "active")
 
 
 class PartnerPolicyStore:
@@ -85,21 +86,20 @@ class PartnerPolicyStore:
         self._cooldown = refresh_cooldown
         self._timeout = timeout
         self._clock = clock
-        self._cache: Dict[str, _Entry] = {}
-        self._flights: Dict[str, asyncio.Lock] = {}
+        self._cache: Dict[Tuple[str, str], _Entry] = {}  # (PM partner ID, name@major)
+        self._flights: Dict[Tuple[str, str], asyncio.Lock] = {}
 
     # ── use-case grant (each partner call) ───────────────────────────────────
 
     async def granted(self, partner_id: str, use_case_ref: str) -> bool:
-        """The partner's PM use-case policy grants ``use_case_ref`` (``name@major``).
+        """The partner has an active PM policy for ``use_case_ref`` (``name@major``).
 
         Raises ``PolicyUnavailable`` when PM cannot be read and nothing usable is cached."""
-        policy = await self.use_case_policy(partner_id)
-        return policy is not None and use_case_ref in (policy.get("allowed_use_cases") or [])
+        return await self.use_case_policy(partner_id, use_case_ref) is not None
 
-    async def use_case_policy(self, partner_id: str) -> Optional[Dict[str, Any]]:
-        """The partner's active use-case policy, or None (PM has none)."""
-        ref = partner_reference_id(partner_id)
+    async def use_case_policy(self, partner_id: str, use_case_ref: str) -> Optional[Dict[str, Any]]:
+        """The partner's active policy for ``use_case_ref``, or None (PM has none)."""
+        ref = (partner_reference_id(partner_id), use_case_ref)
         entry = self._cache.get(ref)
         if entry is not None and not self._needs_fetch(entry, self._clock()):
             return self._answer(ref, entry)
@@ -115,7 +115,9 @@ class PartnerPolicyStore:
         if partner_id is None:
             self._cache.clear()
         else:
-            self._cache.pop(partner_reference_id(partner_id), None)
+            pm_id = partner_reference_id(partner_id)
+            for key in [k for k in self._cache if k[0] == pm_id]:
+                self._cache.pop(key, None)
 
     def _needs_fetch(self, entry: _Entry, now: float) -> bool:
         if (now - entry.last_attempt) < self._cooldown and entry.last_attempt > entry.fetched_at:
@@ -126,24 +128,26 @@ class PartnerPolicyStore:
         return (now - entry.fetched_at) >= ttl
 
     @staticmethod
-    def _answer(ref: str, entry: _Entry) -> Optional[Dict[str, Any]]:
+    def _answer(ref: Tuple[str, str], entry: _Entry) -> Optional[Dict[str, Any]]:
         if not entry.known:
-            raise PolicyUnavailable(f"Partner Management cannot be read for {ref}'s policy")
+            raise PolicyUnavailable(f"Partner Management cannot be read for {ref[0]}'s {ref[1]} policy")
         return entry.policy
 
-    async def _fetch(self, ref: str, prev: Optional[_Entry], now: float) -> _Entry:
+    async def _fetch(self, ref: Tuple[str, str], prev: Optional[_Entry], now: float) -> _Entry:
         if not self.api_url:
             return self._failed(ref, prev, now, "partner_mgmt_api_url is not configured")
+        pm_id, use_case_ref = ref
         try:
             response = await self._client().get(
-                f"{self.api_url}/policies/{ref}", params={"data_controller": ""}, timeout=self._timeout
+                f"{self.api_url}/policies/{pm_id}", params={"use_case": use_case_ref}, timeout=self._timeout
             )
         except httpx.HTTPError as e:
             return self._failed(ref, prev, now, f"request failed: {type(e).__name__}")
         if response.status_code == 404:
             entry = _Entry(None, True, now, now, self._negative_ttl)
             self._cache[ref] = entry
-            _logger.info("No use-case policy for %s in Partner Management (404); cached %ss", ref, self._negative_ttl)
+            _logger.info("No %s policy for %s in Partner Management (404); cached %ss",
+                         use_case_ref, pm_id, self._negative_ttl)
             return entry
         if response.status_code != 200:
             return self._failed(ref, prev, now, f"HTTP {response.status_code}")
@@ -151,7 +155,7 @@ class PartnerPolicyStore:
             policies = _policies(response.json())
         except ValueError:
             return self._failed(ref, prev, now, "the answer is not JSON")
-        policy = next((p for p in policies if _is_use_case_policy(p)), None)
+        policy = next((p for p in policies if _is_policy_for(p, use_case_ref)), None)
         ttl = self._soft_ttl
         server = _max_age(response.headers.get("cache-control"))
         if server is not None:
@@ -160,13 +164,14 @@ class PartnerPolicyStore:
         self._cache[ref] = entry
         return entry
 
-    def _failed(self, ref: str, prev: Optional[_Entry], now: float, why: str) -> _Entry:
+    def _failed(self, ref: Tuple[str, str], prev: Optional[_Entry], now: float, why: str) -> _Entry:
         if prev is not None and prev.known and (now - prev.fetched_at) < self._hard_ttl:
-            _logger.warning("Partner Management policy fetch for %s failed (%s); using the last answer (age %.0fs)",
-                            ref, why, now - prev.fetched_at)
+            _logger.warning("Partner Management policy fetch for %s %s failed (%s); using the last answer "
+                            "(age %.0fs)", ref[0], ref[1], why, now - prev.fetched_at)
             entry = _Entry(prev.policy, True, prev.fetched_at, now, prev.ttl)
         else:
-            _logger.error("Partner Management policy fetch for %s failed (%s) and nothing usable is cached", ref, why)
+            _logger.error("Partner Management policy fetch for %s %s failed (%s) and nothing usable is cached",
+                          ref[0], ref[1], why)
             entry = _Entry(None, False, prev.fetched_at if prev else 0.0, now, 0)
         self._cache[ref] = entry
         return entry
@@ -174,7 +179,7 @@ class PartnerPolicyStore:
     # ── listings (console) ───────────────────────────────────────────────────
 
     async def list_for_use_case(self, use_case_ref: str) -> List[Dict[str, Any]]:
-        """Active use-case policies of active partners granting ``use_case_ref`` (PM ``GET /policies?use_case=``).
+        """Active policies of active partners for ``use_case_ref`` (PM ``GET /policies?use_case=``).
 
         Not cached (console only). Raises ``PolicyUnavailable`` on any PM failure."""
         if not self.api_url:
@@ -193,5 +198,4 @@ class PartnerPolicyStore:
             policies = _policies(response.json())
         except ValueError:
             raise PolicyUnavailable("Partner Management answer is not JSON") from None
-        return [p for p in policies
-                if _is_use_case_policy(p) and p.get("partner_id") and use_case_ref in (p.get("allowed_use_cases") or [])]
+        return [p for p in policies if _is_policy_for(p, use_case_ref) and p.get("partner_id")]

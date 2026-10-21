@@ -145,7 +145,7 @@
           "Use cases"
         ],
         "summary": "Query a use case",
-        "description": "Serve one query for one subject. The body is a signed envelope `{signature, header, message}`: `signature` is a detached JWS over `{header, message}` made with the partner's key and verified against Partner Management (`header.sender_id`). The Composite checks that the partner's use-case policy in Partner Management grants the use case (`name@major`) and the subject's consent (`message.consent_id`, or `message.consent_jws`), queries each registry the use case names, and returns one response envelope signed with its own key.\n\nEach source gets a status: `ok`, `no_record`, `denied`, `unavailable` or `error`. A failing optional source leaves its fields null (the response is still 200); a failing mandatory source fails the request (`source_denied`, `source_unavailable`, `source_error`).\n\nEvery answer, errors included, is a signed envelope: on an error `header.status` is `rjct` and `message.error` has the `code` and `message`.",
+        "description": "Serve one query for one subject. The body is a signed envelope `{signature, header, message}`: `signature` is a detached JWS over `{header, message}` made with the partner's key and verified against Partner Management (`header.sender_id`). The Composite checks that the partner has a policy for the use case (`name@major`) in Partner Management, and the subject's consent (`message.consent_id`, or `message.consent_jws`), queries each registry the use case names, and returns one response envelope signed with its own key.\n\nEach source gets a status: `ok`, `no_record`, `denied`, `unavailable` or `error`. A failing optional source leaves its fields null (the response is still 200); a failing mandatory source fails the request (`source_denied`, `source_unavailable`, `source_error`).\n\nEvery answer, errors included, is a signed envelope: on an error `header.status` is `rjct` and `message.error` has the `code` and `message`.",
         "operationId": "query_composite_v1_use_cases__use_case__query_post",
         "parameters": [
           {
@@ -417,7 +417,7 @@
             }
           },
           "403": {
-            "description": "Not allowed: `partner_not_allowed` (the partner's use-case policy in Partner Management does not grant this use case, `name@major`, or the partner has none), `consent_required`, `consent_malformed`, `consent_signature_invalid`, `consent_subject_mismatch`, `consent_not_yet_valid`, `consent_expired`, `consent_grant_missing`, `consent_scope_missing`, `consent_denied`, `consent_receipt_missing` (no consent token for a mandatory registry), `source_denied` (a mandatory source was denied).",
+            "description": "Not allowed: `partner_not_allowed` (the partner has no policy for this use case, `name@major`, in Partner Management), `consent_required`, `consent_malformed`, `consent_signature_invalid`, `consent_subject_mismatch`, `consent_not_yet_valid`, `consent_expired`, `consent_grant_missing`, `consent_scope_missing`, `consent_denied`, `consent_receipt_missing` (no consent token for a mandatory registry), `source_denied` (a mandatory source was denied).",
             "content": {
               "application/json": {
                 "examples": {
@@ -1235,7 +1235,7 @@
           "Console (staff)"
         ],
         "summary": "List partners",
-        "description": "Partners whose use-case policy in Partner Management grants a published use case: the use cases granted, the policy version, and the keys Partner Management serves for each (key ID and algorithm). `pm_error` is set when Partner Management cannot be read.\n\nStaff only: needs a console login (IAM session cookie or `Authorization: Bearer`) with the `composite:view` permission. Present only when the console is on (`console_enabled` and a database).",
+        "description": "Partners with a Partner Management policy for a published use case (one policy per use case): the use cases granted and the keys Partner Management serves for each (key ID and algorithm). `pm_error` is set when Partner Management cannot be read.\n\nStaff only: needs a console login (IAM session cookie or `Authorization: Bearer`) with the `composite:view` permission. Present only when the console is on (`console_enabled` and a database).",
         "operationId": "list_partners_composite_v1_admin_partners_get",
         "responses": {
           "200": {

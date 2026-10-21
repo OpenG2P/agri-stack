@@ -5,14 +5,12 @@ export interface PartnerKey {
     algorithm: string;
 }
 
-/** One item of GET /composite/v1/admin/partners: a partner whose use-case policy in Partner Management grants published use cases. */
+/** One item of GET /composite/v1/admin/partners: a partner with Partner Management policies for published use cases (one policy per use case). */
 export interface Partner {
     /** Partner Management partner ID, e.g. PARTNER_BANK_A. */
     partner_id: string;
-    /** Published use cases (name@major) its use-case policy grants. */
+    /** Published use cases (name@major) it has a policy for. */
     use_cases: string[];
-    /** Version of its active use-case policy. */
-    policy_version: number | null;
     /** null when Partner Management could not be read (see pm_error). */
     pm_keys: PartnerKey[] | null;
     pm_error: string | null;

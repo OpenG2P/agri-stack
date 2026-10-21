@@ -514,7 +514,7 @@ def cmd_keys(a):
     print("    as a client with PM's partner_manager role). The partner's request carries one policy per use")
     print("   case it may call (name@major); add another use case later with a policy request:\n")
     print(json.dumps(onboarding_payload(a.partner, f"TEST {a.partner}", partner, a.partner_kid,
-                                        [use_case_policy_payload(a.use_case, [a.purpose])]), indent=2))
+                                        [use_case_policy_payload(a.use_case, [a.purpose], allow_partner_consents=True)]), indent=2))
     print(json.dumps(onboarding_payload(a.composite, "Agri Stack composite", composite, a.composite_kid), indent=2))
     print("\n2. The composite's signing key Secret (namespace of the composite):\n")
     print(f"   kubectl -n <ns> create secret generic agri-composite-signing \\\n"

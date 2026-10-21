@@ -466,7 +466,12 @@ class Setup:
         self.a = args
         self.kube = Kube(args.namespace, args.context)
         self.pf = PortForwards(self.kube)
-        self.http = httpx.Client(timeout=30, verify=not args.insecure)
+        # No keep-alive: the services close idle connections after a few seconds (uvicorn's
+        # default), and a request on such a connection through a port-forward fails with
+        # "Server disconnected" without reaching the service. A new connection per request
+        # costs nothing here.
+        self.http = httpx.Client(timeout=30, verify=not args.insecure,
+                                 limits=httpx.Limits(max_keepalive_connections=0))
         self.sites: List[Site] = []
         self.conflicts: List[str] = []
 

@@ -141,6 +141,9 @@ class Run:
         self.u = Urls(a)
         self.http = httpx.Client(timeout=30, verify=not a.insecure)
         self.ref = kit.pm_reference(a.partner)
+        # Set when this run onboarded the partner or changed its policy: the Composite and
+        # the exchange CM may still hold the old answer from PM in their caches.
+        self.changed = False
 
     def close(self):
         self.http.close()
@@ -269,6 +272,7 @@ class Run:
                 request_id = check(self.http.post(f"{base}/partners/requests/key-update", headers=h, json=body),
                                    "PM key-update request").json()["id"]
                 info(f"key-update request {request_id} raised")
+        self.changed = True
         if request_id and self.a.auto_approve:
             check(self.http.post(f"{base}/partners/requests/{request_id}/approve", headers=h,
                                  json={"notes": f"approved by {MANAGED_BY} (--auto-approve)"}), "PM approve")
@@ -289,6 +293,7 @@ class Run:
         info(f"  key         kid {self.kid}, algorithm {kit.SIGNING_ALG}, public key in {path}")
         info(f"  policy      {kit.describe_policy(self.needed_policy())}")
         info("  then approve the onboarding (or key-update) request")
+        self.changed = True
         self._wait(f"PM to serve {self.ref} kid {self.kid}", lambda: self._serves(self.kid))
         info(f"PM serves kid {self.kid}")
 
@@ -303,6 +308,7 @@ class Run:
             info("no PM admin credentials (PM_ADMIN_CLIENT_SECRET): a PM admin raises and approves a policy "
                  f"request for {self.ref} in {self.u.pm_portal}:")
             info(f"  {kit.describe_policy(self.needed_policy())}")
+            self.changed = True
             self._wait(f"PM to serve {self.ref}'s use-case policy granting {self.use_case_ref}", self._granted)
             info("granted")
             return
@@ -318,6 +324,7 @@ class Run:
         if plan["conflicts"]:
             raise kit.KitError("; ".join(plan["conflicts"]), kit.EXIT_DECISION)
         request_ids = list(plan["approve"])
+        self.changed = True
         for rid in request_ids:
             info(f"open request {rid} already carries the use-case policy")
         if plan["request"]:
@@ -337,8 +344,36 @@ class Run:
         info("granted")
 
     # 5–6. consent and query --------------------------------------------------
+    # Longest time the Composite and the exchange CM may serve a cached PM answer from
+    # before this run's change (their policy cache TTL, 60 s by default), plus a margin.
+    CACHE_WAIT = 90
+
     def query(self) -> int:
         step(f"5. Consent and query {self.a.use_case} as {self.a.partner}")
+        deadline = time.monotonic() + (self.CACHE_WAIT if self.changed else 0)
+        while True:
+            status, body = self._send()
+            if not (self._grant_refused(status, body) and time.monotonic() < deadline):
+                break
+            info(f"access refused, as a cached answer from before this run's PM change would be; "
+                 f"retrying in {self.a.poll}s (up to {self.CACHE_WAIT}s)")
+            time.sleep(self.a.poll)
+        if self.a.print:
+            print(json.dumps(body, indent=2, ensure_ascii=False) if not isinstance(body, str) else body, flush=True)
+        return self.summary(status, body)
+
+    @staticmethod
+    def _grant_refused(status, body) -> bool:
+        """The Composite or the exchange CM refused the partner's use-case grant."""
+        if not isinstance(body, dict):
+            return False
+        err = (body.get("message") or {}).get("error") or {}
+        text = f"{err.get('code')} {err.get('message')}"
+        return (status == 403 and err.get("code") == "partner_not_allowed") or any(
+            code in text for code in ("use_case_not_granted", "unknown_partner"))
+
+    def _send(self):
+        """Build the consent and the signed request, POST it and save the answer."""
         subject = {"type": self.a.subject_type, "value": self.a.fan}
         params = {k: v for k, v in (("crop_year", self.a.crop_year), ("season", self.a.season)) if v is not None}
         if self.a.consent_id:
@@ -372,9 +407,7 @@ class Run:
         path = os.path.join(self.a.out_dir, f"{self.a.use_case}-{self.a.base_domain or 'env'}-{stamp}.json")
         kit._write_private(path, (text + "\n").encode())
         info(f"POST {url} → HTTP {r.status_code} in {elapsed} ms; response saved to {path}")
-        if self.a.print:
-            print(text, flush=True)
-        return self.summary(r.status_code, body)
+        return r.status_code, body
 
     def _verify(self, body) -> str:
         if not isinstance(body, dict) or "signature" not in body:

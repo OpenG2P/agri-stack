@@ -21,11 +21,16 @@
 # USAGE:
 #   ./exchange_test.sh [--namespace agrix] [--base-domain agrix.openg2p.org]
 #                      [--registry farmer-registry=trial] [--registry crop-sown-registry=dept1]
-#                      [--partner bank-a] [--consent-id <ID>] [--context <ctx>]
+#                      [--partner bank-a] [--use-case loan-profile] [--fan <ID>]
+#                      [--consent-id <ID>] [--context <ctx>]
 #                      [--setup-only] [--test-only] [--dry-run]
 #
 #   --registry      repeatable; default farmer-registry=trial and crop-sown-registry=dept1
-#   --consent-id    query with a consent collected in the partner portal
+#   --use-case      the use case to test (default loan-profile); it must be published,
+#                   and step 1 sets the departments' ceilings from all published use cases
+#   --fan           the farmer's ID (default: the sample farmer of a demo install)
+#   --consent-id    query with a consent collected in the partner portal; it must have
+#                   been made for the same use case (and --fan must be its farmer)
 #   --setup-only    only step 1;  --test-only  only steps 2-3
 #   --dry-run       step 1 as a dry run (no writes) and stop
 #
@@ -39,6 +44,8 @@ set -euo pipefail
 NAMESPACE="agrix"
 BASE_DOMAIN=""
 PARTNER="bank-a"
+USE_CASE=""
+FAN=""
 CONSENT_ID=""
 CONTEXT=""
 REGISTRIES=()
@@ -48,7 +55,7 @@ DRY_RUN=false
 PYTHON="${PYTHON:-python3}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-usage() { sed -n '2,35p' "$0"; exit 1; }
+usage() { sed -n '2,41p' "$0"; exit 1; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -56,6 +63,8 @@ while [[ $# -gt 0 ]]; do
     --base-domain)  BASE_DOMAIN="$2"; shift 2 ;;
     --registry)     REGISTRIES+=("$2"); shift 2 ;;
     --partner)      PARTNER="$2"; shift 2 ;;
+    --use-case)     USE_CASE="$2"; shift 2 ;;
+    --fan)          FAN="$2"; shift 2 ;;
     --consent-id)   CONSENT_ID="$2"; shift 2 ;;
     --context)      CONTEXT="$2"; shift 2 ;;
     --setup-only)   TEST=false; shift ;;
@@ -100,6 +109,8 @@ if [[ "$TEST" == true ]]; then
 
   _blue "==> 3. Partner test ($PARTNER at $BASE_DOMAIN)"
   args=(--base-domain "$BASE_DOMAIN" --partner "$PARTNER" --auto-approve)
+  [[ -n "$USE_CASE" ]] && args+=(--use-case "$USE_CASE")
+  [[ -n "$FAN" ]] && args+=(--fan "$FAN")
   [[ -n "$CONSENT_ID" ]] && args+=(--consent-id "$CONSENT_ID")
   "$PYTHON" "$HERE/partner_test.py" "${args[@]}"
 fi

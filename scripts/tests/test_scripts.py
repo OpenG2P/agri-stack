@@ -461,3 +461,16 @@ def test_partner_test_raises_a_policy_request_for_an_onboarded_partner(tmp_path,
     (pol,) = body["policies"]
     assert pol["data_controller"] is None and pol["allowed_use_cases"] == ["insurance@1", "loan-profile@1"]
     assert any(p[0].endswith("/approve") for p in pm.posts)
+
+
+def test_partner_test_retries_only_grant_refusals():
+    """A refusal of the use-case grant (possibly a cached PM answer) is retried; other failures are not."""
+    import partner_test
+
+    refused = partner_test.Run._grant_refused
+    assert refused(403, {"message": {"error": {"code": "partner_not_allowed", "message": "not granted"}}})
+    assert refused(403, {"message": {"error": {"code": "consent_denied", "message":
+                                               "the exchange Consent Manager denied the consent (use_case_not_granted)"}}})
+    assert not refused(403, {"message": {"error": {"code": "consent_denied", "message": "denied (expired)"}}})
+    assert not refused(503, {"message": {"error": {"code": "partner_policy_unavailable"}}})
+    assert not refused(200, "not json")

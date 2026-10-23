@@ -71,6 +71,7 @@ def test_app_end_to_end(tmp_path, composite_p12):
     env = {
         **os.environ,
         "AGRI_COMPOSITE_USE_CASES_DIR": USE_CASES,
+        "AGRI_COMPOSITE_CONSENT_MODE": "passthrough",  # no exchange CM in this test
         "AGRI_COMPOSITE_USE_CASES_RELOAD_SECONDS": "0",
         "AGRI_COMPOSITE_SIGNING_P12_PATH": composite_p12["path"],
         "AGRI_COMPOSITE_SIGNING_P12_PASSWORD": composite_p12["password"],

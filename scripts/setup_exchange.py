@@ -390,7 +390,7 @@ class Topology(Commons):
         self.composite_deploy = comp["metadata"]["name"]
         self.composite_svc, self.composite_port = service_for(services, comp)
         self.composite_id = env_value(cenv, "AGRI_COMPOSITE_COMPOSITE_PARTNER_ID", "agri-composite")
-        self.consent_mode = env_value(cenv, "AGRI_COMPOSITE_CONSENT_MODE", "passthrough").lower() or "passthrough"
+        self.consent_mode = env_value(cenv, "AGRI_COMPOSITE_CONSENT_MODE", "exchange").lower() or "exchange"
         volumes = comp["spec"]["template"]["spec"].get("volumes") or []
         sec_vol = next((v for v in volumes if "secret" in v and "sign" in v["name"]), None)
         self.signing_secret = sec_vol["secret"]["secretName"] if sec_vol else "agri-composite-signing"

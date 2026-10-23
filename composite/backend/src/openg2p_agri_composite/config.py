@@ -119,16 +119,16 @@ login with the `composite:view` permission; present only when the console is on.
     default_overall_timeout_ms: int = 10000
 
     # ── Consent mode ──────────────────────────────────────────────────────────
-    # passthrough (default): the partner's consent JWS goes to each registry
-    # unchanged; each registry validates it with its own Consent Manager.
-    # exchange: the composite first validates the partner's consent at the
-    # exchange Consent Manager (consent_exchange_cm_url) asking for consent
-    # tokens (short-lived, one per registry and query; "receipts" in the CM API),
-    # and sends each registry its own controller's token instead.
-    consent_mode: Literal["passthrough", "exchange"] = "passthrough"
+    # exchange (default): the composite checks (or looks up) the partner's consent
+    # at the exchange Consent Manager (consent_exchange_cm_url), which issues a
+    # consent token per registry (short-lived, one registry and query;
+    # "receipts" in the CM API); each registry gets its own token.
+    # passthrough: the partner's consent JWS goes to each registry unchanged; each
+    # registry validates it with its own Consent Manager.
+    consent_mode: Literal["passthrough", "exchange"] = "exchange"
     # Exchange Consent Manager partner-api base URL (…/consent/v1/validate is
-    # appended), e.g. http://commons-services-consent-manager-partner-api.
-    consent_exchange_cm_url: str = ""
+    # appended): the CM of the composite's own namespace.
+    consent_exchange_cm_url: str = "http://commons-services-cm-partner-api"
     consent_exchange_cm_timeout_seconds: float = 5.0
 
     # ── Audit Manager (CloudEvents, fire-and-forget). Empty URL → off. ────────

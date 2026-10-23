@@ -47,10 +47,10 @@ def authorize(call):
     return call["message"]["search_request"][0]["search_criteria"].get("authorize")
 
 
-async def test_passthrough_is_default_and_never_calls_cm(x):
+async def test_exchange_is_default_and_passthrough_never_calls_cm(x):
     from openg2p_agri_composite.core.engine import EngineSettings
 
-    assert EngineSettings().consent_mode == "passthrough"
+    assert EngineSettings().consent_mode == "exchange"
     x.engine.settings.consent_mode = "passthrough"  # CM URL still set: ignored
     env = x.envelope()
     status, body = await x.query(env)
@@ -167,15 +167,17 @@ async def test_exchange_without_cm_url_fails_closed(x):
     assert x.registries.calls == []
 
 
-def test_settings_default_passthrough_and_reject_unknown_mode(monkeypatch):
+def test_settings_default_exchange_and_reject_unknown_mode(monkeypatch):
     from openg2p_agri_composite.config import Settings
     from pydantic import ValidationError
 
-    assert Settings().consent_mode == "passthrough" and Settings().consent_exchange_cm_url == ""
-    monkeypatch.setenv("AGRI_COMPOSITE_CONSENT_MODE", "exchange")
+    s = Settings()
+    assert s.consent_mode == "exchange"
+    assert s.consent_exchange_cm_url == "http://commons-services-cm-partner-api"
+    monkeypatch.setenv("AGRI_COMPOSITE_CONSENT_MODE", "passthrough")
     monkeypatch.setenv("AGRI_COMPOSITE_CONSENT_EXCHANGE_CM_URL", CM_URL)
     s = Settings()
-    assert s.consent_mode == "exchange" and s.consent_exchange_cm_url == CM_URL
+    assert s.consent_mode == "passthrough" and s.consent_exchange_cm_url == CM_URL
     with pytest.raises(ValidationError):
         Settings(consent_mode="bogus")
 

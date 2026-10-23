@@ -59,7 +59,7 @@ class Harness:
         )
         self.policies = PartnerPolicyStore(PM_URL, lambda: self.client)
         self.engine = CompositeEngine(
-            EngineSettings(composite_partner_id="agri-composite", registries=REGISTRIES,
+            EngineSettings(composite_partner_id="agri-composite", registries=REGISTRIES, consent_mode="passthrough",
                            default_overall_timeout_ms=3000),
             self.registry,
             self.crypto,

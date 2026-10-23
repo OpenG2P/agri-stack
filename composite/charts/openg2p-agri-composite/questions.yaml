@@ -85,6 +85,12 @@ questions:
   label: Exchange Consent Manager Timeout
   group: Agri Stack exchange
   show_if: composite.consent.mode=exchange
+- variable: composite.envVars.AGRI_COMPOSITE_PARTNER_POLICY_HARD_TTL_SECONDS
+  description: "How long (seconds) the Composite keeps using a partner's last known use-case policy while Partner Management is unreachable (default 21600, 6 hours). During a Partner Management outage a revoked partner can still be served for up to this long; shorter stops it sooner, but refuses every partner sooner when Partner Management is down."
+  type: string
+  default: "21600"
+  label: Partner Policy Hard TTL (seconds)
+  group: Integration
 - variable: composite.corsAllowOrigins
   description: Browser origins allowed to call the Composite (comma-separated), by default the Consent Manager's partner portal for its use-case pages. Empty for none.
   type: string

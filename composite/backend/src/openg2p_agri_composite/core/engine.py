@@ -75,10 +75,10 @@ class EngineSettings:
     default_overall_timeout_ms: int = 10000
     # controller id -> {"url", "partner_id", "receiver_id"}
     registries: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # exchange (default): checked or looked up at the exchange Consent Manager;
+    # each registry gets its own controller's consent token.
     # passthrough: the partner's consent goes to each registry unchanged.
-    # exchange: validated at the exchange Consent Manager first; each registry
-    # gets its own controller's consent token instead.
-    consent_mode: str = "passthrough"
+    consent_mode: str = "exchange"
     exchange_cm_url: str = ""
     exchange_cm_timeout_seconds: float = 5.0
 

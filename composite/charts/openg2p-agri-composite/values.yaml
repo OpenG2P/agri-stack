@@ -339,7 +339,7 @@ composite:
     # portal reading the public use-case list). Rendered as a JSON list (the setting is a
     # list, and an empty or plain-text value stops the API at start); [] = no CORS.
     AGRI_COMPOSITE_CORS_ALLOW_ORIGINS: '{{ include "agriComposite.corsOriginsJson" $ }}'
-    AGRI_COMPOSITE_CONSENT_MODE: '{{ .Values.consent.mode | default "passthrough" }}'
+    AGRI_COMPOSITE_CONSENT_MODE: '{{ .Values.consent.mode | default "exchange" }}'
     AGRI_COMPOSITE_CONSENT_EXCHANGE_CM_URL: '{{ tpl (.Values.consent.exchangeCmUrl | default "") $ }}'
     AGRI_COMPOSITE_CONSENT_EXCHANGE_CM_TIMEOUT_SECONDS: '{{ .Values.consent.exchangeCmTimeoutSeconds | default 5 }}'
     # Partner request freshness window (header.message_ts), seconds.

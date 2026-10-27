@@ -15,6 +15,7 @@ from ..core.crypto import build_composite_crypto
 from ..core.engine import CompositeEngine, EngineSettings
 from ..core.loader import UseCaseRegistry
 from ..core.policies import PartnerPolicyStore
+from ..core.ratelimit import RateLimiter
 
 _config = Settings.get_config()
 _logger = logging.getLogger(_config.logging_default_logger_name)
@@ -85,6 +86,15 @@ class CompositeService(BaseService):
             refresh_cooldown=_config.partner_policy_refresh_cooldown_seconds,
             timeout=_config.partner_policy_fetch_timeout_seconds,
         )
+        self.limiter = RateLimiter(
+            redis_url=_config.rate_limit_redis_url,
+            redis_password=_config.rate_limit_redis_password,
+            key_prefix=_config.rate_limit_redis_key_prefix,
+            redis_timeout_seconds=_config.rate_limit_redis_timeout_seconds,
+            redis_retry_seconds=_config.rate_limit_redis_retry_seconds,
+        )
+        if not self.limiter.shared:
+            _logger.info("No AGRI_COMPOSITE_RATE_LIMIT_REDIS_URL; rate limits count per worker process")
         self.engine = CompositeEngine(
             EngineSettings(
                 composite_partner_id=_config.composite_partner_id,
@@ -100,6 +110,7 @@ class CompositeService(BaseService):
             self.crypto,
             self.http_client,
             audit=self.audit,
+            limiter=self.limiter,
             activity=self.activity,
             policies=self.policies,
         )
@@ -157,6 +168,7 @@ class CompositeService(BaseService):
             self._reload_task = None
         await self.audit.drain()
         await self.activity.stop()
+        await self.limiter.close()
         if self._client is not None:
             await self._client.aclose()
             self._client = None

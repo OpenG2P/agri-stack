@@ -111,6 +111,16 @@ login with the `composite:view` permission; present only when the console is on.
     # Partner request freshness (header.message_ts within now ± this). 0 disables.
     request_max_skew_seconds: int = 300
 
+    # ── Rate limit (use case limits.rate_per_partner) ─────────────────────────
+    # Redis URL for buckets shared by every pod and worker; empty → per worker
+    # process. While Redis is unreachable each worker counts on its own (a warning
+    # is logged; calls never fail for it) and Redis is retried after retry_seconds.
+    rate_limit_redis_url: str = ""
+    rate_limit_redis_password: str = ""  # overrides a password in the URL
+    rate_limit_redis_key_prefix: str = "agri-composite:ratelimit:"
+    rate_limit_redis_timeout_seconds: float = 0.25
+    rate_limit_redis_retry_seconds: float = 10.0
+
     # ── Outbound HTTP (one pooled client per worker) ──────────────────────────
     http_max_connections: int = 200
     http_max_keepalive_connections: int = 50

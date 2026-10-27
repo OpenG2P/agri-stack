@@ -231,6 +231,83 @@ def test_token_bucket():
     assert rl.allow("p", "u@1", 2, 60) is False
 
 
+def _redis_limiters(n, now):
+    import fakeredis
+
+    server = fakeredis.FakeServer()
+    return server, [
+        RateLimiter(redis_client=fakeredis.FakeAsyncRedis(server=server), redis_clock=lambda: now[0])
+        for _ in range(n)
+    ]
+
+
+async def test_redis_token_bucket_allow_deny_refill_and_ttl():
+    now = [1000.0]
+    server, (rl,) = _redis_limiters(1, now)
+    assert [await rl.acquire("p", "u@1", 2, 60) for _ in range(3)] == [True, True, False]
+    assert await rl.acquire("other", "u@1", 2, 60) is True  # per partner
+    assert await rl.acquire("p", "u@2", 2, 60) is True  # per use case
+    now[0] += 30  # half the period refills one token
+    assert await rl.acquire("p", "u@1", 2, 60) is True
+    assert await rl.acquire("p", "u@1", 2, 60) is False
+    ttl = await rl._redis.ttl("agri-composite:ratelimit:p:u@1")
+    assert 0 < ttl <= 60  # an idle bucket expires once it would be full again
+
+
+async def test_redis_bucket_uses_the_redis_server_clock_by_default():
+    import fakeredis
+
+    rl = RateLimiter(redis_client=fakeredis.FakeAsyncRedis(server=fakeredis.FakeServer()))
+    assert [await rl.acquire("p", "u@1", 2, 3600) for _ in range(3)] == [True, True, False]
+
+
+async def test_redis_bucket_is_shared_across_limiters():
+    # Two limiters on one Redis = two pods: together they get the configured rate, not twice it.
+    now = [1000.0]
+    _, (pod_a, pod_b) = _redis_limiters(2, now)
+    results = [await (pod_a if i % 2 else pod_b).acquire("p", "u@1", 3, 60) for i in range(6)]
+    assert results == [True, True, True, False, False, False]
+
+
+async def test_redis_script_reloaded_after_script_flush():
+    now = [1000.0]
+    _, (rl,) = _redis_limiters(1, now)
+    assert await rl.acquire("p", "u@1", 2, 60) is True
+    await rl._redis.script_flush()  # EVALSHA → NOSCRIPT → EVAL
+    assert await rl.acquire("p", "u@1", 2, 60) is True
+    assert await rl.acquire("p", "u@1", 2, 60) is False
+
+
+async def test_redis_down_falls_back_to_local_bucket(caplog):
+    import logging
+
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    class DownRedis:
+        calls = 0
+
+        def register_script(self, _):
+            async def run(**_):
+                DownRedis.calls += 1
+                raise RedisConnectionError("connection refused")
+            return run
+
+    now = [0.0]
+    rl = RateLimiter(clock=lambda: now[0], redis_client=DownRedis(), redis_retry_seconds=60)
+    with caplog.at_level(logging.WARNING):
+        assert [await rl.acquire("p", "u@1", 2, 60) for _ in range(3)] == [True, True, False]
+    assert DownRedis.calls == 1  # not retried on every call while down
+    assert "unreachable" in caplog.text
+
+
+async def test_unreachable_redis_url_falls_back():
+    rl = RateLimiter(redis_url="redis://127.0.0.1:1/0", redis_timeout_seconds=0.2)
+    assert rl.shared
+    assert await rl.acquire("p", "u@1", 1, 60) is True
+    assert await rl.acquire("p", "u@1", 1, 60) is False
+    await rl.close()
+
+
 def test_requested_scopes_take_the_whole_grant_for_a_registry_with_an_undeclared_source():
     from openg2p_agri_composite.core.consent import requested_scopes
 

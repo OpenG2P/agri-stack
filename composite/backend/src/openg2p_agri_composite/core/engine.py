@@ -122,7 +122,7 @@ class CompositeEngine:
             compiled, subject = await self._authorise(use_case_ref, body, header_major, found)
             message = body["message"]
             parameters = self._validate_parameters(compiled, message.get("parameters"))
-            self._rate_limit(compiled, partner_id)
+            await self._rate_limit(compiled, partner_id)
             granted, preset = await self._check_consent(compiled, message, subject, partner_id)
             receipts = None
             if granted is None:
@@ -298,9 +298,9 @@ class CompositeEngine:
                 raise QueryError(400, "invalid_input", str(e)) from None
         return out
 
-    def _rate_limit(self, compiled: CompiledUseCase, partner_id: str):
+    async def _rate_limit(self, compiled: CompiledUseCase, partner_id: str):
         rate = compiled.spec.limits.rate()
-        if rate and not self.limiter.allow(partner_id, compiled.ref, *rate):
+        if rate and not await self.limiter.acquire(partner_id, compiled.ref, *rate):
             raise QueryError(429, "rate_limited", f"more than {compiled.spec.limits.rate_per_partner} for {compiled.ref}")
 
     async def _check_consent(

@@ -53,6 +53,23 @@ env: list from .Values.envVars (templated literals) and .Values.envVarsFrom.
 {{- end }}
 - name: AGRI_COMPOSITE_REGISTRIES
   value: {{ include "agriComposite.registriesJson" . | quote }}
+{{- with .Values.rateLimit.redis }}
+- name: AGRI_COMPOSITE_RATE_LIMIT_REDIS_URL
+  value: {{ tpl (toString (.url | default "")) $ | quote }}
+- name: AGRI_COMPOSITE_RATE_LIMIT_REDIS_KEY_PREFIX
+  value: {{ tpl (toString (.keyPrefix | default "agri-composite:ratelimit:")) $ | quote }}
+- name: AGRI_COMPOSITE_RATE_LIMIT_REDIS_TIMEOUT_SECONDS
+  value: {{ .timeoutSeconds | default 0.25 | quote }}
+- name: AGRI_COMPOSITE_RATE_LIMIT_REDIS_RETRY_SECONDS
+  value: {{ .retrySeconds | default 10 | quote }}
+{{- if and .passwordSecret .passwordSecret.name }}
+- name: AGRI_COMPOSITE_RATE_LIMIT_REDIS_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ tpl .passwordSecret.name $ | quote }}
+      key: {{ .passwordSecret.key | default "redis-password" | quote }}
+{{- end }}
+{{- end }}
 {{- range $key, $spec := .Values.envVarsFrom }}
 - name: {{ $key }}
   valueFrom:
@@ -187,4 +204,31 @@ corsAllowOrigins (comma-separated, templated) as a JSON list: "" → [].
 {{- if trim . -}}{{- $out = append $out (trim .) -}}{{- end -}}
 {{- end -}}
 {{- toJson $out -}}
+{{- end -}}
+
+{{/*
+Edge rate limit: a duration (<n>s, <n>m, <n>h) as whole seconds.
+*/}}
+{{- define "agriComposite.durationSeconds" -}}
+{{- $p := toString . | trim -}}
+{{- $n := 0 -}}
+{{- if hasSuffix "h" $p }}{{ $n = mul (trimSuffix "h" $p | atoi) 3600 }}
+{{- else if hasSuffix "m" $p }}{{ $n = mul (trimSuffix "m" $p | atoi) 60 }}
+{{- else }}{{ $n = trimSuffix "s" $p | atoi }}{{ end -}}
+{{- if le (int $n) 0 }}{{ fail (printf "edgeRateLimit.per: %q is not a duration like 30s, 1m or 1h" $p) }}{{ end -}}
+{{- $n -}}
+{{- end -}}
+
+{{/*
+Edge rate limit names: unique per namespace and release (several installs share
+one gateway). The route name is the Envoy route name the VirtualService sets.
+*/}}
+{{- define "agriComposite.edgeRateLimitName" -}}
+{{- printf "%s-%s-edge-ratelimit" .Release.Namespace .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- define "agriComposite.edgeRateLimitRoute" -}}
+{{- printf "%s.%s.edge-ratelimited" .Release.Name .Release.Namespace -}}
+{{- end -}}
+{{- define "agriComposite.edgeRateLimitFilter" -}}
+{{- printf "agri-composite.local_ratelimit.%s.%s" .Release.Namespace .Release.Name -}}
 {{- end -}}

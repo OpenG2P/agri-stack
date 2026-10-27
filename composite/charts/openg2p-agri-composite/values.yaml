@@ -34,7 +34,7 @@ composite:
   replicaCount: 1
   # Stateless pods: scale horizontally on CPU. Memory-based autoscaling is off on
   # purpose (Python RSS does not shrink, so a memory HPA never scales back down).
-  # Rate limits are per pod and worker; global limits belong to the API gateway.
+  # Use-case rate limits are counted across pods in Redis (rateLimit below).
   autoscaling:
     enabled: false
     minReplicas: 1
@@ -325,6 +325,23 @@ composite:
       limits:
         rate_per_partner: 60/min
 
+  # ── Rate limit per partner and use case (limits.rate_per_partner) ────────
+  # Token buckets in Redis, shared by every pod and worker. Empty url → each
+  # worker process counts on its own. While Redis is unreachable each worker
+  # counts on its own (a warning is logged; partner calls never fail for it).
+  # The commons Redis has no password; for one with auth set passwordSecret.
+  rateLimit:
+    redis:
+      url: 'redis://commons-redis-master:6379/0'
+      # Keys <prefix><partner>:<use case>; the release name keeps installs apart.
+      keyPrefix: '{{ .Release.Name }}:ratelimit:'
+      passwordSecret:
+        name: ""
+        key: redis-password
+      timeoutSeconds: 0.25
+      # After a Redis failure, count locally this long before trying Redis again.
+      retrySeconds: 10
+
   envVars:
     AGRI_COMPOSITE_APP_PORT: '{{ .Values.containerPort }}'
     AGRI_COMPOSITE_NO_OF_WORKERS: '{{ .Values.workers }}'
@@ -406,6 +423,25 @@ composite:
     periodSeconds: 10
     timeoutSeconds: 5
     failureThreshold: 6
+
+# ── Edge rate limit at the Istio ingress gateway ──────────────────────────
+# A local (per gateway pod) token bucket on the Composite's partner API route,
+# before any request reaches a pod: protects the service from floods, whoever
+# sends them. Not per partner (partners sign inside the request body; the
+# gateway cannot tell them apart); that is the Composite's own limit.
+# The EnvoyFilter is created in gatewayNamespace (istio-system): the installing
+# user needs create/update/delete on envoyfilters.networking.istio.io there.
+edgeRateLimit:
+  enabled: true
+  # Requests allowed per interval, per gateway pod (2 gateway pods → up to 2×).
+  requests: 600
+  # Refill interval: <n>s, <n>m or <n>h.
+  per: 1m
+  # Only this path is limited (the use-case API); empty → the whole hostname.
+  pathPrefix: /composite/v1/use-cases
+  gatewayNamespace: istio-system
+  gatewaySelector:
+    istio: ingressgateway
 
 # ── Console (read-only staff console) ───────────────────────────────────────
 # On by default; console.enabled: false turns it off (nothing below is rendered

@@ -240,13 +240,13 @@ questions:
 - variable: edgeRateLimit.enabled
   description: "Limit all traffic to the Composite's use-case API at the Istio ingress gateway, before it reaches a pod (protects the service; not per partner). Creates an EnvoyFilter in the gateway's namespace (istio-system): the installing user needs rights on EnvoyFilters there."
   type: boolean
-  default: true
+  default: false
   label: Edge Rate Limit
   group: Rate Limits
 - variable: edgeRateLimit.requests
   description: Requests allowed per interval for all partners together, counted per gateway pod (2 gateway pods allow up to twice this). Over it the gateway answers 429 with the header x-local-rate-limit.
   type: int
-  default: 600
+  default: 120
   min: 1
   label: Edge Limit (Requests)
   group: Rate Limits

@@ -432,9 +432,11 @@ composite:
 # The EnvoyFilter is created in gatewayNamespace (istio-system): the installing
 # user needs create/update/delete on envoyfilters.networking.istio.io there.
 edgeRateLimit:
-  enabled: true
+  # Off by default: it creates an EnvoyFilter in the gateway's namespace
+  # (istio-system), which a user limited to their own namespace cannot create.
+  enabled: false
   # Requests allowed per interval, per gateway pod (2 gateway pods → up to 2×).
-  requests: 600
+  requests: 120
   # Refill interval: <n>s, <n>m or <n>h.
   per: 1m
   # Only this path is limited (the use-case API); empty → the whole hostname.

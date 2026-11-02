@@ -81,6 +81,8 @@ spec:
             items:
               - key: {{ .Values.signingKey.p12Key }}
                 path: {{ .Values.signingKey.p12Key }}
+              - key: {{ .Values.signingKey.pemKey }}
+                path: {{ .Values.signingKey.pemKey }}
         - name: tmp
           emptyDir:
             medium: Memory

@@ -194,8 +194,14 @@ questions:
   show_if: console.enabled=true
 
 # ---------------------------- Signing key ---------------------------
+- variable: composite.signingKey.generate
+  description: "Generate the Composite's signing key at install (kept on upgrades). Its public key is served at /.well-known/jwks.json, where Partner Management reads it. A Secret you created yourself is always left alone."
+  type: boolean
+  default: true
+  label: Generate Signing Key
+  group: Signing key
 - variable: composite.signingKey.secretName
-  description: "Secret holding the Composite's signing key: keys composite.p12 (file), password, and optionally kid and algorithm. Create it before installing (Storage → Secrets, or kubectl create secret generic)."
+  description: "Secret holding the Composite's signing key: generated (key.pem, kid), or one you create before installing with composite.p12 (file), password, and optionally kid and algorithm."
   type: string
   default: agri-composite-signing
   label: Signing Key Secret

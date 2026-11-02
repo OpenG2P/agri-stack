@@ -97,15 +97,24 @@ composite:
     gateway:
       enabled: false
 
-  # ── Composite signing key (.p12) from a Secret you create ─────────────────
+  # ── Composite signing key ─────────────────────────────────────────────────
+  # generate: true (default) — the chart creates the Secret on first install
+  # with a generated EC P-256 key (pemKey) and a kid, and keeps it on upgrades
+  # and uninstall. The composite serves its public key at /.well-known/jwks.json;
+  # Partner Management reads it from there (bootstrapPartners), so nothing has
+  # to be registered by hand.
+  # Your own key instead: create the Secret before installing, with a .p12; the
+  # chart then leaves the Secret alone (a .p12 wins over a PEM key):
   # kubectl -n <ns> create secret generic agri-composite-signing \
   #   --from-file=composite.p12=./composite.p12 --from-literal=password='<p12 password>' \
   #   --from-literal=kid=agri-composite-2026-01 --from-literal=algorithm=auto
   # kid: label sent in the JWS header (blank → the certificate's SHA-256 thumbprint);
-  # it must match the kid registered for the composite in Partner Management.
+  # it must match the kid Partner Management serves for the composite.
   # algorithm: auto (from the key type: EC → ES256, Ed25519 → EdDSA, RSA → RS256).
   signingKey:
+    generate: true
     secretName: agri-composite-signing
+    pemKey: key.pem
     p12Key: composite.p12
     passwordKey: password
     kidKey: kid
@@ -351,6 +360,7 @@ composite:
     AGRI_COMPOSITE_USE_CASES_DIR: '{{ .Values.useCasesMountPath }}'
     AGRI_COMPOSITE_USE_CASES_RELOAD_SECONDS: '{{ .Values.useCasesReloadSeconds }}'
     AGRI_COMPOSITE_SIGNING_P12_PATH: '{{ .Values.signingKey.mountPath }}/{{ .Values.signingKey.p12Key }}'
+    AGRI_COMPOSITE_SIGNING_KEY_PEM_PATH: '{{ .Values.signingKey.mountPath }}/{{ .Values.signingKey.pemKey }}'
     AGRI_COMPOSITE_LOGGING_LEVEL: INFO
     # Browser origins allowed to call the composite (e.g. the Consent Manager's partner
     # portal reading the public use-case list). Rendered as a JSON list (the setting is a

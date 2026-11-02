@@ -44,6 +44,10 @@ def test_app_end_to_end(tmp_path, composite_p12):
         async def run():
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
                 assert (await c.get("/ping")).status_code == 200
+                jwks = (await c.get("/.well-known/jwks.json")).json()
+                # No kid set: the .p12 certificate's thumbprint, as in the signatures.
+                assert len(jwks["keys"]) == 1 and jwks["keys"][0]["kid"] and jwks["keys"][0]["alg"] == "ES256", jwks
+                assert "d" not in jwks["keys"][0], jwks
                 lst = (await c.get("/composite/v1/use-cases")).json()
                 assert [u["use_case"] for u in lst["use_cases"]] == ["loan-profile@1"], lst
                 assert (await c.get("/composite/v1/use-cases/loan-profile@1")).json()["title"]

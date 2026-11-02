@@ -52,6 +52,7 @@ class CompositeService(BaseService):
             signing_p12_path=_config.signing_p12_path,
             signing_p12_password=_config.signing_p12_password,
             signing_kid=_config.signing_kid,
+            signing_key_pem_path=_config.signing_key_pem_path,
             signing_algorithm=_config.signing_algorithm,
             allowed_algorithms=_config.crypto_allowed_algorithms,
             soft_ttl=_config.partner_key_cache_ttl_seconds,

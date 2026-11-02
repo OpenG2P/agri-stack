@@ -85,7 +85,9 @@ login with the `composite:view` permission; present only when the console is on.
     # query fails with a clear error; listing use cases still works.
     signing_p12_path: str = ""
     signing_p12_password: str = ""
-    signing_kid: str = ""  # blank → the certificate's SHA-256 thumbprint
+    signing_kid: str = ""  # blank → the certificate's SHA-256 thumbprint (a PEM key: its public key's)
+    # A PEM private key (the chart's generated key), used when signing_p12_path is not a file.
+    signing_key_pem_path: str = ""
     signing_algorithm: str = "auto"  # auto = from the key type (EC → ES256, Ed25519 → EdDSA, RSA → RS256)
 
     # Partner Management (partner public keys and policies, cached per pod).

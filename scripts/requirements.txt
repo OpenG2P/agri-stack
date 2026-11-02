@@ -1,4 +1,5 @@
-# scripts: partner_kit.py, partner_test.py, setup_exchange.py (tests: also pytest)
+# scripts/test_install.py (tests: also pytest)
 cryptography>=42
 pyjwt>=2.8
 httpx>=0.27
+pyyaml>=6

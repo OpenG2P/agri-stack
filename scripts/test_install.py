@@ -742,12 +742,26 @@ class Run:
         base = f"{p['keycloak_url']}/admin/realms/{p['realm']}"
         found = check(self.http.get(f"{base}/users", headers=h, params={"username": username, "exact": "true"}),
                       "Keycloak GET users").json()
+        # Keycloak's user profile requires email, first and last name: without them
+        # the user is sent to an "update profile" form at first login.
+        profile = {"email": f"{username}@{self.c.exchange.domain or 'example.org'}",
+                   "firstName": self.c.partner, "lastName": "Operator"}
         if found:
             user_id = found[0]["id"]
-            info(f"{username} exists (password left as it is)")
+            user = check(self.http.get(f"{base}/users/{user_id}", headers=h), "Keycloak GET user").json()
+            missing = {k: v for k, v in profile.items() if not user.get(k)}
+            if missing or "UPDATE_PROFILE" in (user.get("requiredActions") or []):
+                user.update(missing)
+                user["emailVerified"] = True
+                user["requiredActions"] = [a for a in user.get("requiredActions") or [] if a != "UPDATE_PROFILE"]
+                check(self.http.put(f"{base}/users/{user_id}", headers=h, json=user),
+                      "Keycloak update user", ok=(200, 204))
+                info(f"{username} exists: profile completed (password left as it is)")
+            else:
+                info(f"{username} exists (password left as it is)")
         else:
             password = self._portal_password(ns, secret_name, username)
-            body = {"username": username, "enabled": True, "emailVerified": True,
+            body = {"username": username, "enabled": True, "emailVerified": True, **profile,
                     "attributes": {"partner_id": [self.c.partner]},
                     "credentials": [{"type": "password", "value": password, "temporary": False}]}
             check(self.http.post(f"{base}/users", headers=h, json=body), "Keycloak create user", ok=(201,))

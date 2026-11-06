@@ -4,13 +4,10 @@
 FROM python:3.12-slim-bookworm
 
 # External OpenG2P framework ref. CI resolves it to a commit SHA (pins in
-# .github/workflows/build-publish.yml). The partner-mgmt crypto backend
-# (PartnerMgmtKeyStore) is on the framework's develop line, not in 1.2.0.
+# .github/workflows/build-publish.yml). Crypto, including the partner-mgmt key
+# store, is in openg2p_fastapi_common.crypto.
 ARG FASTAPI_COMMON_REF=develop
-# iam-core (the console's staff login). Its develop line, to match the framework's
-# develop above: the 1.4.x releases import openg2p_fastapi_common.crypto, which the
-# framework's develop moved to openg2p_fastapi_common.utils.crypto. CI resolves it
-# to a commit SHA.
+# iam-core (the console's staff login), develop line. CI resolves it to a commit SHA.
 ARG IAM_CORE_REF=develop
 
 ENV PYTHONUNBUFFERED=1 \

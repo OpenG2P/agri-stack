@@ -24,7 +24,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.hazmat.primitives.serialization import pkcs12
 from jwt.algorithms import ECAlgorithm, OKPAlgorithm, RSAAlgorithm
-from openg2p_fastapi_common.utils.crypto import PartnerMgmtKeyStore, build_crypto_helper
+from openg2p_fastapi_common.crypto import CryptoFactory, PartnerMgmtKeyStore
 
 _logger = logging.getLogger("agri_composite.crypto")
 
@@ -180,7 +180,7 @@ def build_composite_crypto(
         alg = "RS256"
     if alg not in allowed:
         allowed.append(alg)
-    helper = build_crypto_helper(
+    helper = CryptoFactory.build(
         name="agri-composite-crypto",
         backend="partner-mgmt",
         partner_key_store=store,

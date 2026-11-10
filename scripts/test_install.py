@@ -13,8 +13,8 @@ It tests the install only. In production, partners, policies and keys are manage
 the administrators in Partner Management.
 
 Steps
-  1. Install     the Composite publishes the use case and its public key; the Exchange's
-                 and each department's Partner Management (PM) serve the Composite's key
+  1. Install     the Composite publishes the use case and its public key; each
+                 department's Partner Management (PM) serves the Composite's key
                  (onboarded at install). Read only.
   2. Departments each department's scope policy for the Composite covers what the use
                  case reads from its registry (the department's decision in production;
@@ -26,7 +26,7 @@ Steps
                  `partner`), its password kept in a Kubernetes Secret.
   6. Query       a consent (signed by the partner, or one the Exchange CM holds), the
                  signed query to the Composite, and the response signature checked
-                 against the Composite's key served by PM.
+                 against the Composite's JWKS, as a partner does.
 
 Admin credentials are read from the cluster with kubectl (namespace and Secret per the
 configuration), or from environment variables named there; they are never printed.
@@ -619,7 +619,7 @@ class Run:
         info(f"Composite signs with kid {', '.join(self.composite_keys)}")
 
         problems = []
-        for site in [c.exchange] + [c.registries[ctl] for ctl in sorted(self.scopes)]:
+        for site in [c.registries[ctl] for ctl in sorted(self.scopes)]:
             served = self.served_keys(site, self.composite_ref)
             match = [k["kid"] for k in served
                      if same_public_key(k.get("public_key"), self.composite_keys.get(k.get("kid")))]
@@ -857,9 +857,9 @@ class Run:
             warn("the Composite returned no signed envelope")
             return EXIT_CALL_FAILED
         kid = jws_header(body.get("signature") or "").get("kid")
-        key = next((k for k in self.served_keys(self.c.exchange, self.composite_ref) if k.get("kid") == kid), None)
-        sig = (verify_response(body, load_public(key["public_key"])) + f" (PM key {kid})") if key else \
-            f"not checked (PM serves no kid {kid} for {self.composite_ref})"
+        key = self.composite_keys.get(kid)
+        sig = (verify_response(body, load_public(key)) + f" (JWKS key {kid})") if key else \
+            f"not checked (the Composite's JWKS has no kid {kid})"
         info(f"response signature: {sig}")
         header, msg = body.get("header") or {}, body.get("message") or {}
         info(f"header.status {header.get('status')}" + (

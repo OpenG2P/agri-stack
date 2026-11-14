@@ -145,7 +145,7 @@
           "Use cases"
         ],
         "summary": "Query a use case",
-        "description": "Serve one query for one subject. The body is a signed envelope `{signature, header, message}`: `signature` is a detached JWS over `{header, message}` made with the partner's key and verified against Partner Management (`header.sender_id`). The Composite checks that the partner has a policy for the use case (`name@major`) in Partner Management, and the subject's consent (`message.consent_id`, `message.consent_jws`, or neither: the Exchange's Consent Manager then looks up the consent it holds from this partner for this subject and use case), queries each registry the use case names, and returns one response envelope signed with its own key.\n\nEach source gets a status: `ok`, `no_record`, `denied`, `unavailable` or `error`. A failing optional source leaves its fields null (the response is still 200); a failing mandatory source fails the request (`source_denied`, `source_unavailable`, `source_error`).\n\nEvery answer, errors included, is a signed envelope: on an error `header.status` is `rjct` and `message.error` has the `code` and `message`.",
+        "description": "Serve one query for one subject. The body is a signed envelope `{signature, header, message}`: `signature` is a detached JWS over `{header, message}` made with the partner's key and verified against Partner Management (`header.sender_id`). The Composite checks that the partner has a policy for the use case (`name@major`) in Partner Management, and the subject's consent (`message.consent_id`, `message.consent_jws`, or neither: the Exchange's Consent Manager then looks up the consent it holds from this partner for this subject and the use case's purpose), queries each registry the use case names, and returns one response envelope signed with its own key.\n\nEach source gets a status: `ok`, `no_record`, `denied`, `unavailable` or `error`. A failing optional source leaves its fields null (the response is still 200); a failing mandatory source fails the request (`source_denied`, `source_unavailable`, `source_error`).\n\nEvery answer, errors included, is a signed envelope: on an error `header.status` is `rjct` and `message.error` has the `code` and `message`.",
         "operationId": "query_composite_v1_use_cases__use_case__query_post",
         "parameters": [
           {
@@ -916,7 +916,7 @@
                             "type": "null"
                           }
                         ],
-                        "description": "A consent the partner signed: a compact JWS whose claims name the subject, the purpose, a validity and one grant per registry with its data scopes. Send this or `consent_id`, not both. With neither (Exchange consent mode only), the Exchange's Consent Manager looks up the consent it holds from this partner for this subject and use case (e.g. one collected in the partner portal).",
+                        "description": "A consent the partner signed: a compact JWS whose claims name the subject, the purpose, a validity and one grant per registry with its data scopes. Send this or `consent_id`, not both. With neither (Exchange consent mode only), the Exchange's Consent Manager looks up the consent it holds from this partner for this subject and the use case's purpose (e.g. one collected in the partner portal).",
                         "examples": [
                           "eyJhbGciOiJFUzI1NiIsImtpZCI6ImJhbmstYS1rZXktMSJ9.eyJzdWJqZWN0X2lkIjp7fX0.c2ln"
                         ],
@@ -1011,6 +1011,66 @@
                       "consent_jws": "<compact JWS signed by the partner, with grants per registry>"
                     }
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/jwks.json": {
+      "get": {
+        "tags": [
+          "Keys"
+        ],
+        "summary": "The composite's public keys (JWKS)",
+        "description": "Public key(s) the composite signs with; empty `keys` when it has no signing key.",
+        "operationId": "get_jwks__well_known_jwks_json_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorListResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorListResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorListResponse"
                 }
               }
             }

@@ -206,12 +206,25 @@ def test_open_request_that_does_not_cover_is_a_conflict():
 
 
 def test_use_case_policy_is_its_own_key():
-    uc = t.policy_input(use_case="loan-profile@1", purposes=["credit-assessment"], subject_id_types=["FAYDA_FAN"],
-                        allow_partner_consents=True)
+    uc = t.policy_input(use_case="loan-profile@1", subject_id_types=["FAYDA_FAN"], allow_partner_consents=True)
     plan = t.plan_policies(needed=[uc], active=[{**_scope(), "status": "active"}], pending=[],
                            subject_type="FAYDA_FAN")
     assert plan["request"][0]["use_case"] == "loan-profile@1"
     assert not t.policy_covers({**uc, "status": "active", "allow_partner_consents": False}, uc, "FAYDA_FAN")
+
+
+def test_use_case_policy_lists_no_purposes():
+    # Granting a use case grants its purpose: PM refuses purposes on a use-case policy.
+    uc = t.policy_input(use_case="loan-profile@1", subject_id_types=["FAYDA_FAN"])
+    assert "allowed_purposes" not in uc
+    with pytest.raises(ValueError):
+        t.policy_input(use_case="loan-profile@1", purposes=["credit-assessment"])
+    # An active policy from before (with purposes) still covers; widening it sends no purposes.
+    old = {**uc, "status": "active", "allowed_purposes": ["credit-assessment"], "allowed_subject_id_types": ["X"]}
+    assert not t.policy_covers(old, uc, "FAYDA_FAN")
+    plan = t.plan_policies(needed=[uc], active=[old], pending=[], subject_type="FAYDA_FAN")
+    assert "allowed_purposes" not in plan["request"][0]
+    assert plan["request"][0]["allowed_subject_id_types"] == ["FAYDA_FAN", "X"]
 
 
 def test_policy_validity_cap():

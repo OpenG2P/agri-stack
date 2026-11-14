@@ -65,6 +65,23 @@ def _is_policy_for(policy: Dict[str, Any], use_case_ref: str) -> bool:
             and policy.get("status", "active") == "active")
 
 
+def policy_limits(policy: Dict[str, Any], *, signing_algs: bool = True) -> Dict[str, Any]:
+    """The limits of a use-case policy, as the Consent Manager takes them (validate ``limits``,
+    consent templates): an empty list or no duration is no limit and is left out;
+    ``allow_partner_consents`` is always given (absent means false to the CM).
+    The policy's purposes are not limits: granting a use case grants its purpose."""
+    limits: Dict[str, Any] = {}
+    names = ("allowed_subject_id_types", "allowed_signing_algs") if signing_algs else ("allowed_subject_id_types",)
+    for name in names:
+        values = policy.get(name)
+        if isinstance(values, list) and values:
+            limits[name] = [str(v) for v in values]
+    if policy.get("max_validity_duration"):
+        limits["max_validity_duration"] = str(policy["max_validity_duration"])
+    limits["allow_partner_consents"] = policy.get("allow_partner_consents") is True
+    return limits
+
+
 class PartnerPolicyStore:
     def __init__(
         self,

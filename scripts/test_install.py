@@ -284,11 +284,18 @@ def write_private(path: str, data: bytes):
 
 def policy_input(*, data_controller=None, use_case=None, scopes=(), purposes=(), subject_id_types=(),
                  allow_partner_consents=False) -> dict:
-    """PM PolicyInput: exactly one of data_controller (scope policy) or use_case (name@major)."""
-    return {"data_controller": data_controller, "use_case": use_case, "allowed_data_scopes": sorted(set(scopes)),
-            "allowed_purposes": sorted(set(purposes)), "allowed_subject_id_types": list(subject_id_types),
+    """PM PolicyInput: exactly one of data_controller (scope policy) or use_case (name@major).
+
+    A use-case policy lists no purposes (granting a use case grants its purpose; PM refuses them)."""
+    if use_case and purposes:
+        raise ValueError("a use-case policy takes no purposes")
+    body = {"data_controller": data_controller, "use_case": use_case, "allowed_data_scopes": sorted(set(scopes)),
+            "allowed_subject_id_types": list(subject_id_types),
             "allowed_signing_algs": [SIGNING_ALG], "max_validity_duration": POLICY_MAX_VALIDITY,
             "fetch_type": "oneshot", "allow_partner_consents": allow_partner_consents}
+    if not use_case:
+        body["allowed_purposes"] = sorted(set(purposes))
+    return body
 
 
 def policy_key(policy: dict) -> tuple:
@@ -303,9 +310,9 @@ def policy_label(policy: dict) -> str:
 
 
 def describe_policy(policy: dict) -> str:
-    what = f"scopes {policy['allowed_data_scopes']}, " if policy.get("data_controller") else ""
-    return (f"{policy_label(policy)}: {what}purposes {policy['allowed_purposes']}, "
-            f"ID types {policy['allowed_subject_id_types']}")
+    what = (f"scopes {policy.get('allowed_data_scopes')}, purposes {policy.get('allowed_purposes')}, "
+            if policy.get("data_controller") else "")
+    return f"{policy_label(policy)}: {what}ID types {policy.get('allowed_subject_id_types')}"
 
 
 _DURATION = re.compile(r"^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?$")
@@ -328,7 +335,7 @@ def policy_covers(policy: Optional[dict], needed: dict, subject_type: str) -> bo
         return False
     if needed.get("allow_partner_consents") and not policy.get("allow_partner_consents"):
         return False
-    for field, values in (("allowed_purposes", needed["allowed_purposes"]),
+    for field, values in (("allowed_purposes", needed.get("allowed_purposes") or []),
                           ("allowed_subject_id_types", [subject_type]),
                           ("allowed_signing_algs", needed["allowed_signing_algs"])):
         allowed = policy.get(field) or []
@@ -344,6 +351,8 @@ def merged_policy(active: Optional[dict], needed: dict) -> dict:
         return dict(needed)
     out = dict(needed)
     for field in ("allowed_data_scopes", "allowed_purposes", "allowed_subject_id_types", "allowed_signing_algs"):
+        if field == "allowed_purposes" and out.get("use_case"):
+            continue  # a use-case policy lists no purposes
         out[field] = sorted(set(needed.get(field) or []) | set(active.get(field) or []))
     out["allow_partner_consents"] = bool(needed.get("allow_partner_consents") or active.get("allow_partner_consents"))
     old, new = duration_days(active.get("max_validity_duration")), duration_days(needed.get("max_validity_duration"))
@@ -618,6 +627,14 @@ class Run:
                             "signing key Secret and its log")
         info(f"Composite signs with kid {', '.join(self.composite_keys)}")
 
+        # The internal API (consent templates, read in-cluster by the Exchange CM) must not be public.
+        r = self.http.get(f"{c.composite_url}/composite/v1/internal/consent-templates", params={"partner": c.partner})
+        if r.status_code != 404:
+            raise InstallTestError(f"the Composite's internal API answers HTTP {r.status_code} on its public host "
+                                   f"({c.composite_url}); it must be 404 there: upgrade the Composite chart (its API "
+                                   "VirtualService keeps /composite/v1/internal off the public host)")
+        info("Composite's internal API is not on the public host (404)")
+
         problems = []
         for site in [c.registries[ctl] for ctl in sorted(self.scopes)]:
             served = self.served_keys(site, self.composite_ref)
@@ -672,8 +689,7 @@ class Run:
     # 4. partner --------------------------------------------------------------
     def needed_partner_policy(self) -> dict:
         # The test signs its own consent unless it uses one the Exchange CM holds.
-        return policy_input(use_case=self.use_case_ref, purposes=[self.purpose],
-                            subject_id_types=self.c.subject_id_types,
+        return policy_input(use_case=self.use_case_ref, subject_id_types=self.c.subject_id_types,
                             allow_partner_consents=self.c.consent == "sign")
 
     def partner(self):
@@ -819,7 +835,7 @@ class Run:
         err = (body.get("message") or {}).get("error") or {}
         text = f"{err.get('code')} {err.get('message')}"
         return (status == 403 and err.get("code") == "partner_not_allowed") or any(
-            code in text for code in ("use_case_not_granted", "unknown_partner"))
+            code in text for code in ("unknown_partner",))
 
     def _send(self):
         c = self.c

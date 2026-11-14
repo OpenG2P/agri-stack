@@ -2,9 +2,10 @@
 
 Partner → composite: a signed envelope ``{signature, header, message}``.
 Steps: verify the partner's signature (PM key, fail closed) → resolve the use
-case → the partner's use-case grant (PM policy, fail closed) → validate input → rate limit → consent checks (in
-exchange mode, then consent tokens from the exchange Consent Manager, which looks the
-consent up when the partner sends none) → run the
+case → the partner's use-case grant (PM policy, fail closed; the only grant check) → validate input → rate limit →
+consent checks (in exchange mode, then consent tokens from the exchange Consent Manager, sent the use
+case's purpose and scopes and the policy's limits; it looks the consent up when the partner sends none)
+→ run the
 sources as a DAG → partial-response rule → mapping and derived values → sign
 the response. Nothing is stored; logs carry the request ID, use case, partner,
 statuses and timings only.
@@ -35,7 +36,7 @@ from .crypto import CompositeCrypto
 from .expr import evaluate, set_path
 from .loader import CompiledUseCase, UseCaseRegistry
 from .models import ParameterError, coerce_parameter
-from .policies import PartnerPolicyStore, PolicyUnavailable
+from .policies import PartnerPolicyStore, PolicyUnavailable, policy_limits
 from .ratelimit import RateLimiter
 from .templates import TemplateRenderError, render_query
 
@@ -238,7 +239,7 @@ class CompositeEngine:
             raise QueryError(401, "signature_invalid", "the request signature does not verify against the sender's Partner Management key")
         found["authenticated"] = True
 
-        await self._check_grant(sender, compiled)
+        found["policy"] = await self._check_grant(sender, compiled)
 
         subject = message.get("subject")
         if not isinstance(subject, dict) or not isinstance(subject.get("type"), str) or not subject.get("type") \
@@ -248,20 +249,23 @@ class CompositeEngine:
             raise QueryError(400, "invalid_input", f"subject type must be one of {compiled.spec.input.subject.id_types}")
         return compiled, {"type": subject["type"], "value": subject["value"].strip()}
 
-    async def _check_grant(self, sender: str, compiled: CompiledUseCase):
-        """The sender must have a Partner Management policy for this use case (``name@major``; fail closed)."""
+    async def _check_grant(self, sender: str, compiled: CompiledUseCase) -> Dict[str, Any]:
+        """The sender's Partner Management policy for this use case (``name@major``; fail closed).
+
+        The only grant check: the exchange Consent Manager is sent the policy's limits, never reads it."""
         if self.policies is None:
             raise QueryError(503, "partner_policy_unavailable",
                              "the Composite has no Partner Management policy source configured")
         try:
-            granted = await self.policies.granted(sender, compiled.ref)
+            policy = await self.policies.use_case_policy(sender, compiled.ref)
         except PolicyUnavailable:
             raise QueryError(503, "partner_policy_unavailable",
                              "Partner Management cannot be read to check the partner's use-case grant; "
                              "try again later") from None
-        if not granted:
+        if policy is None:
             raise QueryError(403, "partner_not_allowed",
                              f"partner '{sender}' is not granted the use case {compiled.ref} in Partner Management")
+        return policy
 
     def _check_freshness(self, message_ts):
         skew = self.settings.request_max_skew_seconds
@@ -331,7 +335,7 @@ class CompositeEngine:
             return None, {}
         if not consent_jws:
             if self.settings.consent_mode == "exchange":
-                # No consent sent: the exchange CM looks up the one it holds (partner, subject, use case).
+                # No consent sent: the exchange CM looks up the one it holds (partner, subject, purpose).
                 return None, {}
             raise QueryError(403, "consent_required",
                              f"{compiled.ref} needs the subject's consent (message.consent_jws)")
@@ -377,28 +381,36 @@ class CompositeEngine:
             # own consent is not presented to a department registry).
             return {}, {}
         base = self._exchange_base()
+        # Consent tokens carry only the scopes this use case asks for (CM: granted ∩ requested), so each
+        # registry returns no other field; a registry whose sources name none: what the consent grants it.
+        scopes = requested_scopes(decode_claims(message["consent_jws"]), compiled.spec.sources)
+        if not scopes:
+            raise QueryError(403, "consent_scope_missing", "the consent grants no data scope this use case uses")
         body = {
             "consent_jws": message["consent_jws"],
             "partner_id": self.settings.composite_partner_id,
             "issue_receipts": True,
-            "request_context": self._request_context(compiled, subject),
+            "request_context": self._request_context(compiled, subject, found, scopes),
         }
-        if any(src.scopes or src.optional_scopes for src in compiled.spec.sources):
-            # Consent tokens carry only the scopes this use case asks for (CM: granted ∩ policy ∩ requested),
-            # so each registry returns no other field.
-            body["request_context"]["requested_scopes"] = requested_scopes(
-                decode_claims(message["consent_jws"]), compiled.spec.sources)
         decision = await self._exchange_validate(base, body, request_id, found)
         return self._receipts_and_preset(compiled, decision, granted)
 
     @staticmethod
-    def _request_context(compiled: CompiledUseCase, subject) -> Dict[str, Any]:
-        """The exchange CM's request context: the subject, and the use case (``name@major``) and its
-        purpose, so the CM applies the consenting partner's policy for this use case in Partner Management."""
-        context: Dict[str, Any] = {"subject_id": subject, "use_case": compiled.ref}
-        if compiled.spec.purpose:
-            context["purpose"] = compiled.spec.purpose
-        return context
+    def _request_context(compiled: CompiledUseCase, subject, found: Optional[Dict[str, Any]],
+                         scopes: List[str]) -> Dict[str, Any]:
+        """The exchange CM's request context ("caller terms"): the subject, the use case's purpose and
+        the scopes asked for (the ceiling), the limits of the partner's use-case policy, and the use case
+        (``name@major``) as the template label. The CM reads no use case or use-case policy."""
+        if not compiled.spec.purpose:
+            raise QueryError(500, "use_case_misconfigured",
+                             f"{compiled.ref} names no purpose; the exchange Consent Manager needs one")
+        return {
+            "subject_id": subject,
+            "purpose": compiled.spec.purpose,
+            "requested_scopes": scopes,
+            "limits": policy_limits((found or {}).get("policy") or {}),
+            "template": compiled.ref,
+        }
 
     async def _exchange_validate(
         self, base: str, body: Dict[str, Any], request_id: str, found: Optional[Dict[str, Any]] = None,
@@ -475,22 +487,25 @@ class CompositeEngine:
         """A consent the exchange CM holds → consent tokens, per-source grant flags, preset results.
 
         ``message.consent_id`` names it; without one the CM looks it up (the consent this
-        partner holds for this subject and use case, active and valid now; none → deny
+        partner holds for this subject and the use case's purpose, active and valid now; none → deny
         ``consent_not_found``). The CM checks it (given by the subject, active, in its
         validity, obtained by this partner, about this subject) and answers what it grants per
         registry (``grants``) and the ``consent_id`` it used; the use case's scope rules are
         then applied to that."""
+        scopes = declared_scopes(compiled.spec.sources)
+        if not scopes:
+            # The CM needs the scopes asked for, and a consent it holds is not seen here.
+            raise QueryError(500, "use_case_misconfigured",
+                             f"{compiled.ref}: a consent the exchange Consent Manager holds needs every source "
+                             "to name its data scopes (scopes / optional_scopes)")
         body = {
             "consent_partner_id": partner_id,
             "partner_id": self.settings.composite_partner_id,
             "issue_receipts": True,
-            "request_context": self._request_context(compiled, subject),
+            "request_context": self._request_context(compiled, subject, found, scopes),
         }
         if message.get("consent_id") is not None:
             body["consent_id"] = message["consent_id"].strip()
-        scopes = declared_scopes(compiled.spec.sources)
-        if scopes is not None:
-            body["request_context"]["requested_scopes"] = scopes
         decision = await self._exchange_validate(self._exchange_base(), body, request_id, found)
         raw = decision.get("grants")
         grants = {

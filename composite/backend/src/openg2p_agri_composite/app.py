@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from openg2p_fastapi_common.app import Initializer as BaseInitializer
 from openg2p_fastapi_common.context import dbengine
 
+from .controllers.consent_template_controller import ConsentTemplateController
 from .controllers.jwks_controller import JwksController
 from .controllers.use_case_controller import UseCaseController
 from .services.composite_service import CompositeService, console_active
@@ -24,6 +25,7 @@ class Initializer(BaseInitializer):
         CompositeService()
         UseCaseController().post_init()
         JwksController().post_init()
+        ConsentTemplateController().post_init()
         if console_active():
             from .controllers.admin_controller import AdminController
 

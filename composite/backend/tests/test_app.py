@@ -52,6 +52,8 @@ def test_app_end_to_end(tmp_path, composite_p12):
                 assert [u["use_case"] for u in lst["use_cases"]] == ["loan-profile@1"], lst
                 assert (await c.get("/composite/v1/use-cases/loan-profile@1")).json()["title"]
                 assert (await c.get("/composite/v1/use-cases/nope")).status_code == 404
+                t = await c.get("/composite/v1/internal/consent-templates", params={{"partner": "bank-a"}})
+                assert [x["code"] for x in t.json()["templates"]] == ["loan-profile@1"], t.text
                 header = {{"version": "1.0.0", "message_id": str(uuid.uuid4()),
                           "message_ts": datetime.now(timezone.utc).isoformat(), "action": "query",
                           "sender_id": "bank-a", "receiver_id": "agri-composite"}}

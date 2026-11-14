@@ -73,9 +73,13 @@ async def test_exchange_sends_each_registry_its_receipt(x):
     assert req["issue_receipts"] is True
     assert req["partner_id"] == "agri-composite"
     assert req["request_context"]["subject_id"] == env["message"]["subject"]
-    # the use case (name@major) and its purpose: the CM applies bank-a's use-case policy in PM
-    assert req["request_context"]["use_case"] == "loan-profile@1"
+    # caller terms: the use case's purpose, the policy's limits, the use case as the template label;
+    # the CM reads no use case and no use-case policy
+    assert "use_case" not in req["request_context"]
     assert req["request_context"]["purpose"] == "credit-assessment"
+    assert req["request_context"]["template"] == "loan-profile@1"
+    assert req["request_context"]["limits"] == {"allowed_signing_algs": ["EdDSA", "ES256"],
+                                                "allow_partner_consents": False}
     # receipts carry only the use case's scopes (required and optional), nothing else the consent grants
     assert req["request_context"]["requested_scopes"] == sorted(s for scopes in SCOPES.values() for s in scopes)
     assert [authorize(c)["consent_jws"] for c in x.registries.calls_to(FR_URL)] == ["fr.receipt.jws"]
@@ -201,7 +205,8 @@ async def test_consent_id_is_checked_at_the_exchange_cm_and_registries_get_recei
     assert req["consent_id"] == "c-123" and req["consent_partner_id"] == "bank-a"
     assert req["partner_id"] == "agri-composite" and req["issue_receipts"] is True
     assert "consent_jws" not in req
-    assert req["request_context"]["use_case"] == "loan-profile@1"
+    assert "use_case" not in req["request_context"]
+    assert req["request_context"]["template"] == "loan-profile@1"
     assert req["request_context"]["purpose"] == "credit-assessment"
     assert req["request_context"]["requested_scopes"] == sorted(s for v in SCOPES.values() for s in v)
     assert [authorize(c)["consent_jws"] for c in x.registries.calls_to(FR_URL)] == ["fr.receipt.jws"]
@@ -274,7 +279,8 @@ async def test_no_consent_is_looked_up_at_the_exchange_cm(x):
     assert req["issue_receipts"] is True
     ctx = req["request_context"]
     assert ctx["subject_id"] == env["message"]["subject"]
-    assert ctx["use_case"] == "loan-profile@1" and ctx["purpose"] == "credit-assessment"
+    assert "use_case" not in ctx and ctx["template"] == "loan-profile@1" and ctx["purpose"] == "credit-assessment"
+    assert ctx["limits"] == {"allowed_signing_algs": ["EdDSA", "ES256"], "allow_partner_consents": False}
     assert ctx["requested_scopes"] == sorted(s for v in SCOPES.values() for s in v)
     assert [authorize(c)["consent_jws"] for c in x.registries.calls_to(FR_URL)] == ["fr.receipt.jws"]
     # the consent used is named in the (signed) response and the audit events
@@ -318,3 +324,59 @@ async def test_consent_jws_names_the_consent_the_cm_used(x):
 async def test_no_consent_id_in_the_response_when_the_cm_names_none(x):
     status, body = await x.query(x.envelope())
     assert status == 200 and "consent_id" not in body["message"]
+
+
+# ── caller terms: limits from the partner's use-case policy ──────────────────
+
+async def test_limits_come_from_the_partner_use_case_policy(x):
+    from conftest import use_case_policy
+
+    x.pm.policies["PARTNER_BANK_A"] = [use_case_policy(
+        allowed_subject_id_types=["FAYDA_FAN"], max_validity_duration="P1Y", allow_partner_consents=True,
+        allowed_signing_algs=["ES256"], allowed_purposes=["ignored"])]
+    x.cm.response = lookup_response()
+    status, body = await x.query(x.envelope(consent=None))
+    assert status == 200, body
+    assert x.cm.calls[0][1]["request_context"]["limits"] == {
+        "allowed_subject_id_types": ["FAYDA_FAN"], "max_validity_duration": "P1Y",
+        "allow_partner_consents": True, "allowed_signing_algs": ["ES256"]}
+    # the policy's purposes are no limit and no check (granting a use case grants its purpose)
+    assert x.cm.calls[0][1]["request_context"]["purpose"] == "credit-assessment"
+
+
+async def test_an_ungranted_partner_never_reaches_the_cm(x):
+    x.pm.policies["PARTNER_BANK_A"] = []
+    for consent in (None, "jws"):
+        env = x.envelope() if consent else x.envelope(consent=None)
+        status, body = await x.query(env)
+        assert status == 403 and body["message"]["error"]["code"] == "partner_not_allowed"
+    assert x.cm.calls == []
+
+
+def _undeclare(x, source_id):
+    compiled = x.registry.get("loan-profile@1")
+    src = compiled.sources[source_id]
+    src.scopes, src.optional_scopes = [], []
+
+
+async def test_lookup_needs_every_source_to_name_its_scopes(x):
+    # requested_scopes is required by the CM; a consent it holds is not seen here to take it from.
+    _undeclare(x, "farmer")
+    status, body = await x.query(x.envelope(consent=None))
+    assert status == 500 and body["message"]["error"]["code"] == "use_case_misconfigured"
+    assert x.cm.calls == []
+
+
+async def test_consent_jws_a_source_without_scopes_asks_for_its_grant(x):
+    _undeclare(x, "farmer")
+    status, body = await x.query(x.envelope())
+    assert status == 200, body
+    requested = x.cm.calls[0][1]["request_context"]["requested_scopes"]
+    assert set(SCOPES["farmer-registry"]) <= set(requested)  # what the consent grants farmer-registry
+
+
+async def test_a_use_case_without_a_purpose_is_not_sent_to_the_cm(x):
+    x.registry.get("loan-profile@1").spec.purpose = None
+    status, body = await x.query(x.envelope(consent=None))
+    assert status == 500 and body["message"]["error"]["code"] == "use_case_misconfigured"
+    assert x.cm.calls == []

@@ -92,9 +92,9 @@ questions:
   label: Partner Policy Hard TTL (seconds)
   group: Integration
 - variable: composite.corsAllowOrigins
-  description: Browser origins allowed to call the Composite (comma-separated), by default the Consent Manager's partner portal for its use-case pages. Empty for none.
+  description: Browser origins allowed to call the Composite (comma-separated). None by default: no browser calls it (the Consent Manager reads consent templates in-cluster). Empty for none.
   type: string
-  default: https://consent-partner-portal.{{ tpl .Values.global.baseDomain $ }}
+  default: ""
   label: Allowed Browser Origins (CORS)
   group: Agri Stack exchange
 

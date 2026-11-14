@@ -158,7 +158,7 @@ class QueryMessage(BaseModel):
         description="A consent the partner signed: a compact JWS whose claims name the subject, the purpose, "
         "a validity and one grant per registry with its data scopes. Send this or `consent_id`, not both. "
         "With neither (Exchange consent mode only), the Exchange's Consent Manager looks up the consent it holds "
-        "from this partner for this subject and use case (e.g. one collected in the partner portal).",
+        "from this partner for this subject and the use case's purpose (e.g. one collected in the partner portal).",
         examples=["eyJhbGciOiJFUzI1NiIsImtpZCI6ImJhbmstYS1rZXktMSJ9.eyJzdWJqZWN0X2lkIjp7fX0.c2ln"],
     )
 

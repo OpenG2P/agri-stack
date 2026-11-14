@@ -92,6 +92,8 @@ composite:
       # names containing "api" or "console" still route.
       destination: '{{ include "agriComposite.apiServiceName" $ }}'
       destinationPort: 80
+      # The internal API (/composite/v1/internal: consent templates, read in-cluster by the
+      # Exchange Consent Manager) is never routed here: that path answers 404 on this host.
       prefix: /
       rewriteUri: ""
     gateway:
@@ -164,9 +166,9 @@ composite:
   # useCasesReloadSeconds without a restart. Set existingUseCasesConfigMap to
   # mount your own ConfigMap instead (keys = <name>.yaml).
   # Browser origins allowed to call the composite's APIs (comma-separated, templated):
-  # by default the Consent Manager's partner portal, for its use-case pages.
-  # Empty: none (no CORS headers).
-  corsAllowOrigins: 'https://consent-partner-portal.{{ tpl .Values.global.baseDomain $ }}'
+  # None by default: no browser calls the Composite (the Consent Manager reads
+  # consent templates in-cluster). Empty: none (no CORS headers).
+  corsAllowOrigins: ''
   existingUseCasesConfigMap: ""
   useCasesMountPath: /app/config/use-cases
   useCasesReloadSeconds: 30

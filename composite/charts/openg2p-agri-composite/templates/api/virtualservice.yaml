@@ -9,6 +9,18 @@
 {{- $prefix := include "common.tplvalues.render" (dict "value" .Values.istio.virtualservice.prefix "context" $) }}
 {{- /* Routes: [name, prefix]. With the edge rate limit on, a named route carries it
        (the gateway EnvoyFilter matches the Envoy route by this name). */ -}}
+{{- /* The internal API (consent templates, read in-cluster by the Consent Manager) is never
+       routed on the public host: the public path that would reach it answers 404 (first route). */ -}}
+{{- $internal := "/composite/v1/internal" }}
+{{- $rewrite := include "common.tplvalues.render" (dict "value" (.Values.istio.virtualservice.rewriteUri | default "") "context" $) }}
+{{- $blocked := $internal }}
+{{- if $rewrite }}
+{{- if hasPrefix $rewrite $internal }}
+{{- $blocked = printf "%s%s" $prefix (trimPrefix $rewrite $internal) }}
+{{- else if hasPrefix $internal $rewrite }}
+{{- fail (printf "composite.istio.virtualservice.rewriteUri %q would route the public host into the internal API (%s)" $rewrite $internal) }}
+{{- end }}
+{{- end }}
 {{- $routes := list (list "" $prefix) }}
 {{- if $edge.enabled }}
 {{- $edgeRoute := include "agriComposite.edgeRateLimitRoute" . }}
@@ -32,6 +44,14 @@ spec:
   gateways:
     - {{ default (include "common.names.fullname" .) .Values.istio.virtualservice.gateway }}
   http:
+    - name: "internal-not-public"
+      match:
+        - uri:
+            prefix: {{ $blocked | quote }}
+      directResponse:
+        status: 404
+        body:
+          string: '{"error":{"code":"not_found","message":"Not Found"}}'
     {{- range $routes }}
     - {{ if index . 0 }}name: {{ index . 0 | quote }}
       {{ end }}headers:
